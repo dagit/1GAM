@@ -1,12 +1,17 @@
+{-# LANGUAGE RankNTypes #-}
 module Main where
 
-import Control.Monad ( forever )
+import Control.Monad ( forever, replicateM_, void )
 import Data.Bits ( (.|.) )
-import Graphics.Rendering.GLU.Raw
+import Data.IORef
+-- import Data.Time.Clock -- FIXME: time handling
 import Graphics.Rendering.OpenGL.Raw
+import Reactive.Banana
+import Reactive.Banana.Frameworks
 import System.Exit ( exitWith, ExitCode(..) )
 import System.IO
 import qualified Graphics.UI.GLFW as GLFW
+
 
 initGL :: IO ()
 initGL = do
@@ -26,8 +31,7 @@ resizeScene width height = do
   glViewport 0 0 (fromIntegral width) (fromIntegral height)
   glMatrixMode gl_PROJECTION
   glLoadIdentity
-  -- gluPerspective 45 (fromIntegral width/fromIntegral height) 0.1 100
-  gluOrtho2D 0 (fromIntegral width) (fromIntegral height) 0
+  glOrtho 0 (fromIntegral width) (fromIntegral height) 0 (-1) 1
   glMatrixMode gl_MODELVIEW
   glLoadIdentity
   glFlush
@@ -38,13 +42,6 @@ shutdown = do
   GLFW.terminate
   _ <- exitWith ExitSuccess
   return True
-
-keyPressed :: GLFW.KeyCallback
-keyPressed GLFW.KeyEsc True = shutdown >> return ()
-keyPressed k           b    = do
-  putStrLn ("key " ++ show k ++ " is " ++ show b)
-  hFlush stdout
-  return ()
 
 drawScene :: IO ()
 drawScene = do
@@ -101,16 +98,109 @@ main = do
   -- window starts at upper left corner of the screen
   GLFW.setWindowPosition 0 0
   GLFW.setWindowTitle "pong"
-  GLFW.setWindowRefreshCallback drawScene
   -- register the funciton called when our window is resized
   GLFW.setWindowSizeCallback resizeScene
-  -- register the function called when the keyboard is pressed.
-  GLFW.setKeyCallback keyPressed
   GLFW.setWindowCloseCallback shutdown
-  -- initialize our window.
   -- start event processing engine
-  forever $ do
-    drawScene
-    GLFW.swapBuffers
+  gameLoop emptyGame
 
+---- copy & paste from stack overflow and other sources ----
+-- http://stackoverflow.com/questions/12685430/how-to-implement-a-game-loop-in-reactive-banana
+-- https://github.com/bernstein/breakout/blob/master/src/SdlAdapter.hs
+-- https://gist.github.com/HeinrichApfelmus/3821030
+--
+
+-- TODO: this is just a stub and won't work correctly if you
+-- need the time
+getRealTime :: IO Integer
+getRealTime = floor <$> GLFW.getTime
+
+registerKeyHandler :: ((a -> IO ()) -> GLFW.KeyCallback) -> AddHandler a
+registerKeyHandler handler sink = do
+  putStrLn "called registerKeyHandler"
+  hFlush stdout
+  GLFW.setKeyCallback (handler sink)
+  return (return ())
+
+-- timing helpers
+fps, dt, ms :: Integer
+fps  = 30                     -- physics framerate
+dt   = (1000 `div` fps) * ms  -- physics timestep
+ms   = 1000  -- TODO: what should this be?
+ 
+type Duration = Integer
+type Time     = Integer
+ 
+type GameNetworkDescription = forall t. Event t (GLFW.Key,Bool)       -- ^ user input
+                                     -> Moment t (Behavior t (IO ())) -- ^ graphics to be sampled
+
+emptyGame :: GameNetworkDescription
+emptyGame input = do
+  return (stepper (return ())
+                  (handleKey <$> input))
+  where
+  handleKey (GLFW.KeyEsc,True) = void shutdown
+  handleKey (i,True) = do
+    drawScene
+    putStrLn ("key: " ++ show i)
+    hFlush stdout
+  handleKey _        = drawScene
+
+gameLoop :: GameNetworkDescription -- ^ event network corresponding to the game
+         -> IO ()
+gameLoop gameNetwork = do
+    -- set up event network
+    (ahKeyInput, fireKeyInput) <- newAddHandler
+    (ahPhysics , firePhysics)  <- newAddHandler
+    (ahGraphics, fireGraphics) <- newAddHandler
+    clock <- newIORef 0
+ 
+    network <- compile $ do
+        eKeyInput <- fromAddHandler ahKeyInput
+        ePhysics  <- fromAddHandler ahPhysics
+        bTime     <- fromPoll (readIORef clock)
+        eGraphics <- fromAddHandler ahGraphics
+        bGraphics <- gameNetwork eKeyInput
+        reactimate $ bGraphics <@ eGraphics
+    actuate network
+
+    void (registerKeyHandler curry fireKeyInput)
+
+    -- This is a hack to get the network 'started'
+    fireKeyInput (GLFW.KeyUnknown,False)
+
+    let go clock acc old = do
+        -- acc  accumulates excess time (usually < dt)
+        -- old  keeps track of the time of the previous iteration of the game loop
+        -- input <- SDL.pollEvent
+        forever $ do
+            new <- getRealTime
+            GLFW.pollEvents
+            -- FIXME: set clock properly for user input
+ 
+            -- "physics" simulation
+            -- invariant: the world time begins at 0 and is always a multiple of dt
+            let (n,acc2) = (new - old + acc) `divMod` dt
+
+            replicateM_ (fromIntegral n) $ do
+                modifyIORef clock (+dt)  -- update clock
+                firePhysics ()           -- handle physics
+
+            -- no need to hog all the CPU
+            -- FIXME: something with maximalFPS
+            -- SDL.delay (dt `div` 3)
+ 
+            -- graphics
+            -- note: time might *not* be multiple of dt, for interpolation
+            tempclock <- readIORef clock    -- remember multiple of dt
+            modifyIORef clock (+acc2)       -- advance clock slightly
+            fireGraphics ()                 -- interpolate graphics
+            writeIORef  clock tempclock     -- reset clock to multiple of dt
+
+            GLFW.swapBuffers
+            go clock acc2 new
+
+    -- game loop
+    go clock 0 =<< getRealTime
+    
 

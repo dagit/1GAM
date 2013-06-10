@@ -15,8 +15,8 @@ executable pong
   main-is:             Main.hs
   -- other-modules:       
   build-depends:       base
+                     , time
                      , reactive-banana
                      , GLFW-b
                      , OpenGLRaw
-                     , GLURaw
   ghc-options:         -Wall
