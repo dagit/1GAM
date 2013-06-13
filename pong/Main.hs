@@ -50,17 +50,12 @@ drawScene = do
                          .|. gl_DEPTH_BUFFER_BIT
   glLoadIdentity  -- reset view
 
-  --glTranslatef (-1.5) 0 (-6.0) --Move left 1.5 Units and into the screen 6.0
-
   -- draw a triangle
   glBegin gl_TRIANGLES
   glVertex2f 0      1  -- top
   glVertex2f 1    (-1) -- bottom right
   glVertex2f (-1) (-1) -- bottom left
   glEnd
-
-
-  -- glTranslatef 3 0 0  -- move right three units
 
   glBegin gl_QUADS
   glVertex2f 0  10 -- top left
@@ -75,6 +70,7 @@ drawScene = do
 
 main :: IO ()
 main = do
+  hSetBuffering stdout NoBuffering
   True <- GLFW.initialize
   -- select type of display mode:
   -- Double buffer
@@ -118,7 +114,6 @@ getRealTime = floor <$> GLFW.getTime
 registerKeyHandler :: ((a -> IO ()) -> GLFW.KeyCallback) -> AddHandler a
 registerKeyHandler handler sink = do
   putStrLn "called registerKeyHandler"
-  hFlush stdout
   GLFW.setKeyCallback (handler sink)
   return (return ())
 
@@ -135,16 +130,18 @@ type GameNetworkDescription = forall t. Event t (GLFW.Key,Bool)       -- ^ user 
                                      -> Moment t (Behavior t (IO ())) -- ^ graphics to be sampled
 
 emptyGame :: GameNetworkDescription
-emptyGame input = do
-  return (stepper (return ())
-                  (handleKey <$> input))
+emptyGame input = return (stepper drawScene (updateWorld <$> input))
   where
-  handleKey (GLFW.KeyEsc,True) = void shutdown
-  handleKey (i,True) = do
+  updateWorld i = do
+    handleKey i
     drawScene
-    putStrLn ("key: " ++ show i)
-    hFlush stdout
-  handleKey _        = drawScene
+  handleKey (GLFW.KeyEsc,True)  = void shutdown
+  handleKey (i          ,True)  = do
+    -- Go back to start of line
+    putStr ("\r" ++ show i)
+  handleKey (_          ,False) = do
+    -- Hack to clear the previous line
+    putStr "\r                    \r"
 
 gameLoop :: GameNetworkDescription -- ^ event network corresponding to the game
          -> IO ()
@@ -167,7 +164,9 @@ gameLoop gameNetwork = do
     void (registerKeyHandler curry fireKeyInput)
 
     -- This is a hack to get the network 'started'
-    fireKeyInput (GLFW.KeyUnknown,False)
+    -- Note: This is no longer needed now that the
+    -- initial value of the stepper is drawScene
+    -- fireKeyInput (GLFW.KeyUnknown,False)
 
     let go clock acc old = do
         -- acc  accumulates excess time (usually < dt)
