@@ -12,6 +12,12 @@ import System.Exit ( exitWith, ExitCode(..) )
 import System.IO
 import qualified Graphics.UI.GLFW as GLFW
 
+data Ball = Ball
+  { ballX :: GLfloat
+  , ballY :: GLfloat
+  } deriving (Read, Show, Eq, Ord)
+
+zeroBall = Ball 0 0
 
 initGL :: IO ()
 initGL = do
@@ -31,7 +37,7 @@ resizeScene width height = do
   glViewport 0 0 (fromIntegral width) (fromIntegral height)
   glMatrixMode gl_PROJECTION
   glLoadIdentity
-  glOrtho 0 (fromIntegral width) (fromIntegral height) 0 (-1) 1
+  glOrtho 0 (fromIntegral width) 0 (fromIntegral height) (-1) 1
   glMatrixMode gl_MODELVIEW
   glLoadIdentity
   glFlush
@@ -43,25 +49,18 @@ shutdown = do
   _ <- exitWith ExitSuccess
   return True
 
-drawScene :: IO ()
-drawScene = do
+drawScene :: Ball -> IO ()
+drawScene ball = do
   -- clear the screen and the depth buffer
   glClear $ fromIntegral  $  gl_COLOR_BUFFER_BIT
                          .|. gl_DEPTH_BUFFER_BIT
   glLoadIdentity  -- reset view
 
-  -- draw a triangle
-  glBegin gl_TRIANGLES
-  glVertex2f 0      1  -- top
-  glVertex2f 1    (-1) -- bottom right
-  glVertex2f (-1) (-1) -- bottom left
-  glEnd
-
   glBegin gl_QUADS
-  glVertex2f 0  10 -- top left
-  glVertex2f 10 10 -- top right
-  glVertex2f 10 0 -- bottom right
-  glVertex2f 0  0 -- bottom left
+  glVertex2f (ballX ball)    (ballY ball+10) -- top left
+  glVertex2f (ballX ball+10) (ballY ball+10) -- top right
+  glVertex2f (ballX ball+10) (ballY ball)    -- bottom right
+  glVertex2f (ballX ball)    (ballY ball)    -- bottom left
   glEnd
 
   glFlush
@@ -98,7 +97,7 @@ main = do
   GLFW.setWindowSizeCallback resizeScene
   GLFW.setWindowCloseCallback shutdown
   -- start event processing engine
-  gameLoop emptyGame
+  gameLoop movingBall
 
 ---- copy & paste from stack overflow and other sources ----
 -- http://stackoverflow.com/questions/12685430/how-to-implement-a-game-loop-in-reactive-banana
@@ -126,22 +125,40 @@ ms   = 1000  -- TODO: what should this be?
 type Duration = Integer
 type Time     = Integer
  
-type GameNetworkDescription = forall t. Event t (GLFW.Key,Bool)       -- ^ user input
+type GameNetworkDescription = forall t. Event  t (GLFW.Key,Bool)       -- ^ user input
                                      -> Moment t (Behavior t (IO ())) -- ^ graphics to be sampled
 
-emptyGame :: GameNetworkDescription
-emptyGame input = return (stepper drawScene (updateWorld <$> input))
+(&>) :: (Applicative f, Applicative g) =>
+     f (g a) -> f (g b) -> f (g b)
+(&>) = liftA2 (*>)
+
+movingBall :: GameNetworkDescription
+movingBall input = do
+  return $ (stepper (drawScene zeroBall) processInput) &>
+           (stepper (return ()) (handleQuit <$> input))
   where
-  updateWorld i = do
-    handleKey i
-    drawScene
-  handleKey (GLFW.KeyEsc,True)  = void shutdown
-  handleKey (i          ,True)  = do
-    -- Go back to start of line
-    putStr ("\r" ++ show i)
-  handleKey (_          ,False) = do
-    -- Hack to clear the previous line
-    putStr "\r                    \r"
+  processInput = unions
+    [ drawScene  <$> move (fst <$> filterE snd input)
+    -- TODO: add more behaviors here
+    ]
+
+  moveBall :: (GLfloat,GLfloat) -> Ball -> Ball
+  moveBall (x,y) b = b
+    { ballX = ballX b + x
+    , ballY = ballY b + y }
+
+  moveBallInput :: GLFW.Key -> Ball -> Ball
+  moveBallInput GLFW.KeyLeft  b = moveBall (-4,0) b
+  moveBallInput GLFW.KeyRight b = moveBall ( 4,0) b
+  moveBallInput GLFW.KeyUp    b = moveBall (0, 4) b
+  moveBallInput GLFW.KeyDown  b = moveBall (0,-4) b
+  moveBallInput _             b = b
+
+  handleQuit  (GLFW.KeyEsc ,True)  = void shutdown
+  handleQuit  _                    = return ()
+
+  move :: Event t GLFW.Key -> Event t Ball
+  move key = accumE zeroBall (moveBallInput <$> key)
 
 gameLoop :: GameNetworkDescription -- ^ event network corresponding to the game
          -> IO ()
