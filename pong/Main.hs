@@ -17,6 +17,7 @@ data Ball = Ball
   , ballY :: GLfloat
   } deriving (Read, Show, Eq, Ord)
 
+zeroBall :: Ball
 zeroBall = Ball 0 0
 
 initGL :: IO ()
@@ -128,17 +129,25 @@ type Time     = Integer
 type GameNetworkDescription = forall t. Event  t (GLFW.Key,Bool)       -- ^ user input
                                      -> Moment t (Behavior t (IO ())) -- ^ graphics to be sampled
 
+-- | Useful for sequencing behaviors
+-- eg., stepper a b &> stepper c d
 (&>) :: (Applicative f, Applicative g) =>
      f (g a) -> f (g b) -> f (g b)
 (&>) = liftA2 (*>)
 
 movingBall :: GameNetworkDescription
 movingBall input = do
-  return $ (stepper (drawScene zeroBall) processInput) &>
-           (stepper (return ()) (handleQuit <$> input))
+  return (stepper (drawScene zeroBall) processInput)
   where
   processInput = unions
     [ drawScene  <$> move (fst <$> filterE snd input)
+    -- We have to use a filterE on the event stream so that it only
+    -- matches when the Esc key is actually pressed instead of
+    -- always matching and doing nothing. In the later case it conflicts
+    -- with the move event and then the order the events are combined
+    -- determins which one actually fires (only one will fire, so either
+    -- you can move the ball or you can quit, but not both).
+    , handleQuit <$> filterE (\(k,b) -> k == GLFW.KeyEsc && b) input
     -- TODO: add more behaviors here
     ]
 
