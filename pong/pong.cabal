@@ -19,4 +19,6 @@ executable pong
                      , reactive-banana
                      , GLFW-b
                      , OpenGLRaw
+                     , active
+                     , vector-space
   ghc-options:         -Wall
