@@ -1,15 +1,18 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE Arrows      #-}
 module Main where
 
 import Control.Monad ( forever, void )
 import Data.Bits ( (.|.) )
+import Data.IORef
+import FRP.Yampa hiding ((^+^))
+import Control.Applicative
 import Graphics.Rendering.OpenGL.Raw
 import System.Exit ( exitWith, ExitCode(..) )
 import System.IO
 import qualified Graphics.UI.GLFW as GLFW
 
 import Data.VectorSpace
-import Data.AffineSpace
 import qualified Data.Time as T
 
 data Ball = Ball
@@ -101,113 +104,113 @@ main = do
   -- start event processing engine
   gameLoop movingBall
 
----- copy & paste from stack overflow and other sources ----
--- http://stackoverflow.com/questions/12685430/how-to-implement-a-game-loop-in-reactive-banana
--- https://github.com/bernstein/breakout/blob/master/src/SdlAdapter.hs
--- https://gist.github.com/HeinrichApfelmus/3821030
---
+type GameNetworkDescription = SF (Event External)  -- ^ user input
+                                 (Event (IO Bool)) -- ^ graphics to be sampled
 
-{-
-registerKeyHandler :: ((a -> IO ()) -> GLFW.KeyCallback) -> AddHandler a
-registerKeyHandler handler sink = do
-  putStrLn "called registerKeyHandler"
-  GLFW.setKeyCallback (handler sink)
-  return (return ())
+data External = KeyInput (GLFW.Key,Bool)
+              | Graphics
+              | Physics
 
-type GameNetworkDescription = forall t. Event    t (GLFW.Key,Bool)       -- ^ user input
-                                     -> Behavior t Time
-                                     -> Event    t ()
-                                     -> Moment   t (Behavior t (IO ())) -- ^ graphics to be sampled
+isKeyInput :: External -> Bool
+isKeyInput (KeyInput{}) = True
+isKeyInput _            = False
 
--- | Useful for sequencing behaviors
--- eg., stepper a b &> stepper c d
-(&>) :: (Applicative f, Applicative g) =>
-     f (g a) -> f (g b) -> f (g b)
-(&>) = liftA2 (*>)
+isGraphics :: External -> Bool
+isGraphics Graphics = True
+isGraphics _        = False
 
-movingBall :: GameNetworkDescription
-movingBall input time tick = do
-  return $ (drawScene <$> (moveBall <$> (combinedPos (time <@ tick) input) <*> pure zeroBall)) &>
-           (stepper (return ()) (handleQuit <$> filterE (\(k,b) -> k == GLFW.KeyEsc && b) input))
+isPhysics :: External -> Bool
+isPhysics Physics = True
+isPhysics _       = False
 
+fromKeyInput :: External -> (GLFW.Key,Bool)
+fromKeyInput (KeyInput i) = i
+fromKeyInput _            = error "fromKeyInput: called on non-KeyInput value"
+
+filterPhysics  :: Event (External) -> Event ()
+filterPhysics e = (const ()) <$> filterE isPhysics e
+
+filterGraphics :: Event (External) -> Event ()
+filterGraphics e = (const ()) <$> filterE isGraphics e
+
+filterKeyInput :: Event (External) -> Event (GLFW.Key,Bool)
+filterKeyInput e = fromKeyInput <$> filterE isKeyInput e
+
+movingBall :: SF (Event External) (Event (IO Bool))
+movingBall = proc e -> do
+  let input    = filterKeyInput e
+      graphics = filterGraphics e
+      -- To have physics update separately from input/graphics:
+      -- tick     = filterPhysics  e
+  rp <- rightPos -< input
+  lp <- leftPos  -< input
+  up <- upPos    -< input
+  dp <- downPos  -< input
+  let ball = moveBall (rp ^+^ lp ^+^ up ^+^ dp) zeroBall
+  returnA -< ((\_ -> drawScene ball >> return True) <$> graphics) `rMerge`
+             (handleQuit <$> filterE (\(k,b) -> k == GLFW.KeyEsc && b) input)
   where
   moveBall :: (GLfloat,GLfloat) -> Ball -> Ball
   moveBall (x,y) b = b
     { ballX = ballX b + x
     , ballY = ballY b + y }
 
-  handleQuit :: (GLFW.Key,Bool) -> IO ()
-  handleQuit  (GLFW.KeyEsc ,True)  = void shutdown
-  handleQuit  _                    = return ()
+  handleQuit :: a -> IO Bool
+  handleQuit  _  = shutdown
 
-  pos :: (GLfloat,GLfloat) -> Behavior t Bool -> Behavior t (GLfloat,GLfloat)
-  pos p bBool = (\bool b -> if bool then p ^+^ b else b) <$> bBool <*> pure (0,0)
+  pos :: (GLfloat,GLfloat) -> SF Bool (GLfloat,GLfloat)
+  pos p = proc bool -> returnA -< if bool then p else (0,0)
 
-  rightPos :: Event t Time -> Event t (GLFW.Key,Bool) -> Behavior t (GLfloat,GLfloat)
-  rightPos t k = integral t (pos (100,0) (isRightPressed k))
+  rightPos :: SF (Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
+  rightPos = isRightPressed >>> pos (100,0) >>> integral
 
-  leftPos :: Event t Time -> Event t (GLFW.Key,Bool) -> Behavior t (GLfloat,GLfloat)
-  leftPos t k = integral t (pos (-100,0) (isLeftPressed k))
+  leftPos :: SF (Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
+  leftPos = isLeftPressed >>> pos (-100,0) >>> integral
 
-  upPos :: Event t Time -> Event t (GLFW.Key,Bool) -> Behavior t (GLfloat,GLfloat)
-  upPos t k = integral t (pos (0,100) (isUpPressed k))
+  upPos :: SF (Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
+  upPos = isUpPressed >>> pos (0,100) >>> integral
 
-  downPos :: Event t Time -> Event t (GLFW.Key,Bool) -> Behavior t (GLfloat,GLfloat)
-  downPos t k = integral t (pos (0,-100) (isDownPressed k))
+  downPos :: SF (Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
+  downPos = isDownPressed >>> pos (0,-100) >>> integral
 
-  combinedPos t k = (^+^) <$> ((^+^) <$> rightPos t k  <*> leftPos t k)
-                          <*> ((^+^) <$> upPos    t k  <*> downPos t k)
+  isPressed :: ((GLFW.Key,Bool) -> Bool) -> SF (Event (GLFW.Key,Bool)) Bool
+  isPressed p = proc e -> do
+    accumHold False -< (\b _ -> snd b) <$> filterE p e
 
-  isRightPressed :: Event t (GLFW.Key,Bool) -> Behavior t Bool
-  isRightPressed e = isPressed (\(k,_) -> k == GLFW.KeyRight) e
+  isRightPressed :: SF (Event (GLFW.Key,Bool)) Bool
+  isRightPressed = isPressed (\(k,_) -> k == GLFW.KeyRight)
+  isLeftPressed  :: SF (Event (GLFW.Key,Bool)) Bool
+  isLeftPressed  = isPressed (\(k,_) -> k == GLFW.KeyLeft)
+  isUpPressed    :: SF (Event (GLFW.Key,Bool)) Bool
+  isUpPressed    = isPressed (\(k,_) -> k == GLFW.KeyUp)
+  isDownPressed  :: SF (Event (GLFW.Key,Bool)) Bool
+  isDownPressed  = isPressed (\(k,_) -> k == GLFW.KeyDown)
 
-  isLeftPressed :: Event t (GLFW.Key,Bool) -> Behavior t Bool
-  isLeftPressed e = isPressed (\(k,_) -> k == GLFW.KeyLeft) e
-
-  isUpPressed :: Event t (GLFW.Key,Bool) -> Behavior t Bool
-  isUpPressed e = isPressed (\(k,_) -> k == GLFW.KeyUp) e
-
-  isDownPressed :: Event t (GLFW.Key,Bool) -> Behavior t Bool
-  isDownPressed e = isPressed (\(k,_) -> k == GLFW.KeyDown) e
-
-  isPressed :: ((GLFW.Key,Bool) -> Bool) -> Event t (GLFW.Key,Bool) -> Behavior t Bool
-  isPressed p e = accumB False ((\b _ -> snd b) <$> filterE p e)
-
-gameLoop :: GameNetworkDescription -- ^ event network corresponding to the game
-         -> IO ()
-gameLoop gameNetwork = do
-    -- set up event network
+gameLoop :: SF (Event External) (Event (IO Bool)) -> IO ()
+gameLoop sf = do
     start <- T.getCurrentTime
-    let getTime = toTime . flip T.diffUTCTime start <$> T.getCurrentTime
 
-    (ahKeyInput, fireKeyInput) <- newAddHandler
-    (ahPhysics , firePhysics)  <- newAddHandler
-    (ahGraphics, fireGraphics) <- newAddHandler
+    let getTime = fromRational . toRational . flip T.diffUTCTime start <$> T.getCurrentTime
+        initialization = return NoEvent
+        actuate _ _ NoEvent   = return False
+        actuate _ _ (Event b) = b
 
-    network <- compile $ do
-        eKeyInput <- fromAddHandler ahKeyInput
-        ePhysics  <- fromAddHandler ahPhysics
-        bTime     <- fromPoll getTime
-        eGraphics <- fromAddHandler ahGraphics
-        bGraphics <- gameNetwork eKeyInput bTime ePhysics
-        reactimate $ bGraphics <@ eGraphics
-    actuate network
+    rh <- reactInit initialization actuate sf
 
-    void (registerKeyHandler curry fireKeyInput)
+    clock <- newIORef =<< getTime
+    let sense ev = do
+          t0 <- readIORef clock 
+          t1 <- getTime
 
-    -- game loop
+          let dt = t1 - t0
+          writeIORef clock t1
+          void (react rh (dt, Just (Event ev)))
+
+    GLFW.setKeyCallback (\k b -> sense (KeyInput (k,b)))
+
+    -- gameloop
     forever $ do
       GLFW.pollEvents
-      -- FIXME: set clock properly for user input
-
-      -- "physics" simulation
-      firePhysics ()           -- handle physics
-
-      -- graphics
-      fireGraphics ()          -- interpolate graphics
-
+      sense Physics
+      sense Graphics
       GLFW.swapBuffers
--}
-
-gameLoop   = undefined
-movingBall = undefined
