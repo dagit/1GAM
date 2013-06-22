@@ -21,4 +21,5 @@ executable pong
                      , OpenGLRaw
                      , active
                      , vector-space
-  ghc-options:         -Wall
+  ghc-options:       -Wall -O2
+  ghc-prof-options:  -fprof-auto -prof -rtsopts
