@@ -11,7 +11,8 @@ category:            Game
 build-type:          Simple
 cabal-version:       >=1.8
 
-executable pong
+executable reactive-banana-pong
+  hs-source-dirs:      reactive-banana
   main-is:             Main.hs
   -- other-modules:       
   build-depends:       base
