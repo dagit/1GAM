@@ -24,3 +24,16 @@ executable reactive-banana-pong
                      , vector-space
   ghc-options:       -Wall -O2
   ghc-prof-options:  -fprof-auto -prof -rtsopts
+
+executable yampa-pong
+  hs-source-dirs:      yampa
+  main-is:             Main.hs
+  -- other-modules:       
+  build-depends:       base
+                     , time
+                     , Yampa
+                     , GLFW-b
+                     , OpenGLRaw
+                     , vector-space
+  ghc-options:       -Wall -O2
+  ghc-prof-options:  -fprof-auto -prof -rtsopts
