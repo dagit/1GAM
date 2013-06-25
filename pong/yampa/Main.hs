@@ -54,13 +54,21 @@ shutdown = do
   _ <- exitWith ExitSuccess
   return True
 
-drawScene :: Ball -> IO ()
-drawScene ball = do
+drawScene :: GameState -> IO ()
+drawScene gs = do
+  let ball                = gsBall gs
+      rPaddle             = psPaddle (gsRPlayer gs)
+      (rPaddleX,rPaddleY) = pPos rPaddle
+      (rPaddleH,rPaddleW) = (pHeight rPaddle, pWidth rPaddle)
+      lPaddle             = psPaddle (gsLPlayer gs)
+      (lPaddleX,lPaddleY) = pPos lPaddle
+      (lPaddleH,lPaddleW) = (pHeight lPaddle, pWidth lPaddle)
   -- clear the screen and the depth buffer
   glClear $ fromIntegral  $  gl_COLOR_BUFFER_BIT
                          .|. gl_DEPTH_BUFFER_BIT
   glLoadIdentity  -- reset view
 
+  -- Draw the ball
   glBegin gl_QUADS
   glVertex2f (ballX ball)    (ballY ball+10) -- top left
   glVertex2f (ballX ball+10) (ballY ball+10) -- top right
@@ -68,6 +76,20 @@ drawScene ball = do
   glVertex2f (ballX ball)    (ballY ball)    -- bottom left
   glEnd
 
+  -- Draw the right paddle
+  glBegin gl_QUADS
+  glVertex2f rPaddleX            (rPaddleY+rPaddleH) -- top left
+  glVertex2f (rPaddleX+rPaddleW) (rPaddleY+rPaddleH) -- top right
+  glVertex2f (rPaddleX+rPaddleW) rPaddleY            -- bottom right
+  glVertex2f rPaddleX            rPaddleY            -- bottom left
+  glEnd
+  -- Draw the left paddle
+  glBegin gl_QUADS
+  glVertex2f lPaddleX            (lPaddleY+lPaddleH) -- top left
+  glVertex2f (lPaddleX+lPaddleW) (lPaddleY+lPaddleH) -- top right
+  glVertex2f (lPaddleX+lPaddleW) lPaddleY            -- bottom right
+  glVertex2f lPaddleX            lPaddleY            -- bottom left
+  glEnd
   glFlush
 --------------------------------------------------------------------------
 
@@ -136,18 +158,64 @@ filterGraphics e = (const ()) <$> filterE isGraphics e
 filterKeyInput :: Event (External) -> Event (GLFW.Key,Bool)
 filterKeyInput e = fromKeyInput <$> filterE isKeyInput e
 
+data GameState = GameState
+  { gsLPlayer :: PlayerState -- ^ The "left" player
+  , gsRPlayer :: PlayerState -- ^ The "right" player
+  , gsBall    :: Ball        -- ^ The current state (position) of the ball
+  } deriving (Read, Show, Eq, Ord)
+
+data PlayerState = PlayerState
+  { psPaddle :: Paddle -- ^ Position of the paddle and other details
+  , psScore  :: Int    -- ^ The player's current score
+  } deriving (Read, Show, Eq, Ord)
+
+data Paddle = Paddle
+  { pWidth  :: GLfloat
+  , pHeight :: GLfloat
+  , pSpeed  :: GLfloat
+  , pPos    :: (GLfloat,GLfloat)
+  } deriving (Read, Show, Eq, Ord)
+
+mkPaddle :: Paddle
+mkPaddle = Paddle
+  { pWidth  = 10
+  , pHeight = 100
+  , pSpeed  = 100
+  , pPos    = (0,0)
+  }
+
+mkPlayer :: PlayerState
+mkPlayer = PlayerState
+  { psPaddle = mkPaddle
+  , psScore  = 0
+  }
+
+mkGameState :: GameState
+mkGameState = GameState
+  { gsLPlayer = mkPlayer
+  , gsRPlayer = mkPlayer
+  , gsBall    = zeroBall
+  }
+
 movingBall :: SF (Event External) (Event (IO Bool))
 movingBall = proc e -> do
   let input    = filterKeyInput e
       graphics = filterGraphics e
-      -- To have physics update separately from input/graphics:
-      -- tick     = filterPhysics  e
+      tick     = filterPhysics  e
   rp <- rightPos -< input
   lp <- leftPos  -< input
+  -- up/down arrows control the "Right" player's paddle
   up <- upPos    -< input
   dp <- downPos  -< input
-  let ball = moveBall (rp ^+^ lp ^+^ up ^+^ dp) zeroBall
-  returnA -< ((\_ -> drawScene ball >> return True) <$> graphics) `rMerge`
+  -- The ball's position updates on each physics event
+  bp <- ballPos  -< tick
+  let rPlayer   = mkPlayer { psPaddle = mkPaddle { pPos = up ^+^ dp } }
+      lPlayer   = mkPlayer { psPaddle = mkPaddle { pPos = rp ^+^ lp } }
+      ball      = moveBall bp zeroBall
+      gameState = mkGameState { gsRPlayer = rPlayer
+                              , gsLPlayer = lPlayer
+                              , gsBall    = ball }
+  returnA -< ((\_ -> drawScene gameState >> return True) <$> graphics) `rMerge`
              (handleQuit <$> filterE (\(k,b) -> k == GLFW.KeyEsc && b) input)
   where
   moveBall :: (GLfloat,GLfloat) -> Ball -> Ball
@@ -159,14 +227,22 @@ movingBall = proc e -> do
   handleQuit  _  = shutdown
 
   pos :: (GLfloat,GLfloat) -> SF Bool (GLfloat,GLfloat)
-  pos p = proc bool -> returnA -< if bool then p else (0,0)
+  pos p = arr (\bool -> if bool then p else (0,0))
 
+  ballPos :: SF (Event a) (GLfloat,GLfloat)
+  ballPos = arr (\_ -> (100,100)) >>> integral
+
+  -- rightPos and leftPos actually control the "Left" players
+  -- paddle's vertical position. That's why the argument to
+  -- pos might look funny.
   rightPos :: SF (Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
-  rightPos = isRightPressed >>> pos (100,0) >>> integral
+  rightPos = isRightPressed >>> pos (0,100) >>> integral
 
   leftPos :: SF (Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
-  leftPos = isLeftPressed >>> pos (-100,0) >>> integral
+  leftPos = isLeftPressed >>> pos (0,-100) >>> integral
 
+  -- upPos and downPos control the vertical position of
+  -- the "Right" player's paddle
   upPos :: SF (Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
   upPos = isUpPressed >>> pos (0,100) >>> integral
 
