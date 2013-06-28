@@ -192,7 +192,7 @@ mkPaddle :: Paddle
 mkPaddle = Paddle
   { pWidth  = 10
   , pHeight = 100
-  , pSpeed  = 100
+  , pSpeed  = 1000
   , pPos    = (0,0)
   }
 
@@ -220,23 +220,25 @@ instance VectorSpace CFloat CFloat where
 
 movingBall :: SF (Event External) (Event (IO Bool))
 movingBall = proc e -> do
+  (w',h') <- accumHold (0,0) -< (\b _ -> b) <$> filterResize e
   let input    = filterKeyInput e
       graphics = filterGraphics e
       tick     = filterPhysics  e
-  (w',h') <- accumHold (0,0) -< (\b _ -> b) <$> filterResize e
+      (w,h)    = (fromIntegral w', fromIntegral h')
+      rPaddle  = mkPaddle { pPos = rInitPos }
+      lPaddle  = mkPaddle { pPos = lInitPos }
+      rInitPos = ( w / 2 - pWidth rPaddle - 10, 0)
+      lInitPos = (-w / 2                  + 10, 0)
   -- left/right arrows control the "Left" player's paddle
-  lp <- leftPos  -< input
+  lp <- leftPos  -< ((w,h), pSpeed rPaddle, input)
   -- up/down arrows control the "Right" player's paddle
-  rp <- rightPos -< input
+  rp <- rightPos -< ((w,h), pSpeed lPaddle, input)
   -- The ball's position updates on each physics event
-  bp <- ballPos  -< tick
-  let (w,h)     = (fromIntegral w', fromIntegral h')
-      rPlayer   = mkPlayer { psPaddle = mkPaddle { pPos = rPos } }
-      lPlayer   = mkPlayer { psPaddle = mkPaddle { pPos = lPos } }
-      rPos      = rp ^+^ rInitPos
-      lPos      = lp ^+^ lInitPos
-      rInitPos  = ( w / 2 - pWidth (psPaddle rPlayer) - 10, 0)
-      lInitPos  = (-w / 2                             + 10, 0)
+  bp <- ballPos -< ((w,h),tick)
+  let rPlayer   = mkPlayer { psPaddle = rPaddle { pPos = rPos } }
+      lPlayer   = mkPlayer { psPaddle = lPaddle { pPos = lPos } }
+      rPos      = rp ^+^ pPos rPaddle
+      lPos      = lp ^+^ pPos lPaddle
       ball      = moveBall bp zeroBall
       gameState = mkGameState { gsRPlayer = rPlayer
                               , gsLPlayer = lPlayer
@@ -252,50 +254,49 @@ movingBall = proc e -> do
   handleQuit :: a -> IO Bool
   handleQuit  _  = shutdown
 
-  pos :: (GLfloat,GLfloat) -> SF Bool (GLfloat,GLfloat)
-  pos p = arr (\bool -> if bool then p else (0,0))
+  pos :: SF ((GLfloat,GLfloat),Bool) (GLfloat,GLfloat)
+  pos = proc (p,bool) -> do
+    returnA -< if bool then p else (0,0)
 
-  ballPos :: SF (Event a) (GLfloat,GLfloat)
-  ballPos = proc e -> mdo
-    let cc = ceilingCollision (x,y)
-        fc = floorCollision   (x,y)
-        rc = rightCollision   (x,y)
-        lc = leftCollision    (x,y)
-    vx <- accumHold 100 -< e `tag` (\v -> if rc || lc then -v else v)
-    vy <- accumHold 100 -< e `tag` (\v -> if cc || fc then -v else v)
-    (x,y) <- integral   -< (vx,vy)
+  -- TODO: it would probably be better to separate the width/height
+  -- from the tick event so that when the w/h changes there is one
+  -- type of ballPos update (where we make sure it's in bounds)
+  -- and a different type of update when it's a tick event
+  -- where we calculate the position according to physics
+  ballPos :: SF ((GLfloat,GLfloat),Event a) (GLfloat,GLfloat)
+  ballPos = proc ((w,h),e) -> mdo
+    -- TODO: this -10 is to adjust for the width of the ball
+    let ceilingFloorCollision = collision (-h/2,h/2-10) y
+        wallCollision         = collision (-w/2,w/2-10) x
+        reflect               = \b v -> if b then -v else v
+    vx    <- accumHold 100 -< e `tag` reflect wallCollision
+    vy    <- accumHold 100 -< e `tag` reflect ceilingFloorCollision
+    (x,y) <- integral      -< (vx,vy)
     returnA -< (x,y)
 
-  leftCollision :: (GLfloat,GLfloat) -> Bool
-  leftCollision (x,_) = x <= -800/2
-
-  rightCollision :: (GLfloat,GLfloat) -> Bool
-  rightCollision (x,_) = x >= 800/2 - 10
-
-  ceilingCollision :: (GLfloat,GLfloat) -> Bool
-  ceilingCollision (_,y) = y >= 600/2 - 10
-
-  floorCollision :: (GLfloat,GLfloat) -> Bool
-  floorCollision (_,y)= y <= -600/2
+  collision :: (GLfloat,GLfloat) -> GLfloat -> Bool
+  collision (min',max') a = a <= min' || a >= max'
 
   -- rightPos and leftPos actually control the "Left" players
   -- paddle's vertical position. That's why the argument to
   -- pos might look funny.
-  rightPos :: SF (Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
-  rightPos = proc e -> mdo
+  rightPos :: SF ((GLfloat,GLfloat),GLfloat, Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
+  rightPos = proc ((_,h),speed,e) -> mdo
     db <- isDownPressed -< e
     ub <- isUpPressed   -< e
-    dv <- pos (0,-100)  -< db && (-600/2 <= y)
-    uv <- pos (0, 100)  -< ub && (y <= 600/2 - 100)
+    dv <- pos           -< ((0,-speed), db && (-h/2 <= y))
+    -- TODO: pass in paddle dimensions
+    uv <- pos           -< ((0, speed), ub && (y <= h/2 - 100))
     (x,y) <- integral   -< dv ^+^ uv
     returnA -< (x,y)
 
-  leftPos :: SF (Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
-  leftPos = proc e -> mdo
+  leftPos :: SF ((GLfloat,GLfloat),GLfloat,Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
+  leftPos = proc ((_,h),speed,e) -> mdo
     lb <- isLeftPressed  -< e
     rb <- isRightPressed -< e
-    dv <- pos (0,-100)   -< lb && (-600/2 <= y)
-    uv <- pos (0, 100)   -< rb && (y <= 600/2 - 100)
+    dv <- pos            -< ((0,-speed), lb && (-h/2 <= y))
+    -- TODO: pass in paddle dimensions
+    uv <- pos            -< ((0, speed), rb && (y <= h/2 - 100))
     (x,y) <- integral    -< dv ^+^ uv
     returnA -< (x,y)
 
