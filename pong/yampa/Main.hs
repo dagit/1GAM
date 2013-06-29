@@ -234,12 +234,12 @@ movingBall = proc e -> do
   -- up/down arrows control the "Right" player's paddle
   rp <- rightPos -< ((w,h), pSpeed lPaddle, input)
   -- The ball's position updates on each physics event
-  bp <- ballPos -< ((w,h),tick)
   let rPlayer   = mkPlayer { psPaddle = rPaddle { pPos = rPos } }
       lPlayer   = mkPlayer { psPaddle = lPaddle { pPos = lPos } }
       rPos      = rp ^+^ pPos rPaddle
       lPos      = lp ^+^ pPos lPaddle
-      ball      = moveBall bp zeroBall
+  bp <- ballPos -< ((psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
+  let ball      = moveBall bp zeroBall
       gameState = mkGameState { gsRPlayer = rPlayer
                               , gsLPlayer = lPlayer
                               , gsBall    = ball }
@@ -263,19 +263,29 @@ movingBall = proc e -> do
   -- type of ballPos update (where we make sure it's in bounds)
   -- and a different type of update when it's a tick event
   -- where we calculate the position according to physics
-  ballPos :: SF ((GLfloat,GLfloat),Event a) (GLfloat,GLfloat)
-  ballPos = proc ((w,h),e) -> mdo
+  ballPos :: SF ((Paddle,Paddle),(GLfloat,GLfloat),Event a) (GLfloat,GLfloat)
+  ballPos = proc ((lPaddle,rPaddle),(w,h),e) -> mdo
     -- TODO: this -10 is to adjust for the width of the ball
     let ceilingFloorCollision = collision (-h/2,h/2-10) y
         wallCollision         = collision (-w/2,w/2-10) x
+        paddleCollisions      = paddleCollision lPaddle (x,y) || paddleCollision rPaddle (x+10,y)
         reflect               = \b v -> if b then -v else v
-    vx    <- accumHold 100 -< e `tag` reflect wallCollision
+    -- Correctly computing collisions here is sensitive to the velocity. If the
+    -- velocity is high enough then the ball will actually travel into the thing it
+    -- should be colliding with leading to hillarious results.
+    vx    <- accumHold 100 -< e `tag` reflect (wallCollision || paddleCollisions)
     vy    <- accumHold 100 -< e `tag` reflect ceilingFloorCollision
     (x,y) <- integral      -< (vx,vy)
     returnA -< (x,y)
 
   collision :: (GLfloat,GLfloat) -> GLfloat -> Bool
   collision (min',max') a = a <= min' || a >= max'
+
+  paddleCollision :: Paddle -> (GLfloat,GLfloat) -> Bool
+  paddleCollision p (x,y) = pX <= x && x <= pX + pWidth  p &&
+                            pY <= y && y <= pY + pHeight p
+    where
+    (pX,pY) = pPos p
 
   -- rightPos and leftPos actually control the "Left" players
   -- paddle's vertical position. That's why the argument to
