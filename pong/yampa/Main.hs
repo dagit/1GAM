@@ -7,6 +7,7 @@ import Control.Monad ( forever, void )
 import Data.Bits ( (.|.) )
 import Data.IORef
 import FRP.Yampa
+import Control.Monad (forM_)
 import Control.Applicative
 import Graphics.Rendering.OpenGL.Raw
 import System.Exit ( exitWith, ExitCode(..) )
@@ -15,14 +16,6 @@ import System.IO
 import qualified Graphics.UI.GLFW as GLFW
 
 import qualified Data.Time as T
-
-data Ball = Ball
-  { ballX :: GLfloat
-  , ballY :: GLfloat
-  } deriving (Read, Show, Eq, Ord)
-
-zeroBall :: Ball
-zeroBall = Ball 0 0
 
 initGL :: IO ()
 initGL = do
@@ -57,13 +50,9 @@ shutdown = do
 
 drawScene :: GameState -> IO ()
 drawScene gs = do
-  let ball                = gsBall gs
-      rPaddle             = psPaddle (gsRPlayer gs)
-      (rPaddleX,rPaddleY) = pPos rPaddle
-      (rPaddleH,rPaddleW) = (pHeight rPaddle, pWidth rPaddle)
-      lPaddle             = psPaddle (gsLPlayer gs)
-      (lPaddleX,lPaddleY) = pPos lPaddle
-      (lPaddleH,lPaddleW) = (pHeight lPaddle, pWidth lPaddle)
+  let ball    = gsBall gs
+      rPaddle = psPaddle (gsRPlayer gs)
+      lPaddle = psPaddle (gsLPlayer gs)
   -- clear the screen and the depth buffer
   glClear $ fromIntegral  $  gl_COLOR_BUFFER_BIT
                          .|. gl_DEPTH_BUFFER_BIT
@@ -71,27 +60,23 @@ drawScene gs = do
 
   -- Draw the ball
   glBegin gl_QUADS
-  glVertex2f (ballX ball)    (ballY ball+10) -- top left
-  glVertex2f (ballX ball+10) (ballY ball+10) -- top right
-  glVertex2f (ballX ball+10) (ballY ball)    -- bottom right
-  glVertex2f (ballX ball)    (ballY ball)    -- bottom left
+  glVertex2f (bX ball)          (bY ball+ballDiam) -- top left
+  glVertex2f (bX ball+ballDiam) (bY ball+ballDiam) -- top right
+  glVertex2f (bX ball+ballDiam) (bY ball)          -- bottom right
+  glVertex2f (bX ball)          (bY ball)          -- bottom left
   glEnd
 
-  -- Draw the right paddle
-  glBegin gl_QUADS
-  glVertex2f rPaddleX            (rPaddleY+rPaddleH) -- top left
-  glVertex2f (rPaddleX+rPaddleW) (rPaddleY+rPaddleH) -- top right
-  glVertex2f (rPaddleX+rPaddleW) rPaddleY            -- bottom right
-  glVertex2f rPaddleX            rPaddleY            -- bottom left
-  glEnd
+  -- Draw the paddles
+  forM_ [rPaddle,lPaddle] $ \paddle -> do
+    let (paddleX,paddleY) = pPos paddle
+
+    glBegin gl_QUADS
+    glVertex2f paddleX               (paddleY+paddleHeight) -- top left
+    glVertex2f (paddleX+paddleWidth) (paddleY+paddleHeight) -- top right
+    glVertex2f (paddleX+paddleWidth) paddleY                -- bottom right
+    glVertex2f paddleX               paddleY                -- bottom left
+    glEnd
  
-  -- Draw the left paddle
-  glBegin gl_QUADS
-  glVertex2f lPaddleX            (lPaddleY+lPaddleH) -- top left
-  glVertex2f (lPaddleX+lPaddleW) (lPaddleY+lPaddleH) -- top right
-  glVertex2f (lPaddleX+lPaddleW) lPaddleY            -- bottom right
-  glVertex2f lPaddleX            lPaddleY            -- bottom left
-  glEnd
   glFlush
 --------------------------------------------------------------------------
 
@@ -170,6 +155,12 @@ filterKeyInput e = fromKeyInput <$> filterE isKeyInput e
 filterResize :: Event (External) -> Event (Int,Int)
 filterResize e = fromResize <$> filterE isResize e
 
+data Ball = Ball
+  { bX    :: GLfloat
+  , bY    :: GLfloat
+  , bVel  :: (GLfloat,GLfloat)
+  } deriving (Read, Show, Eq, Ord)
+
 data GameState = GameState
   { gsLPlayer :: PlayerState -- ^ The "left" player
   , gsRPlayer :: PlayerState -- ^ The "right" player
@@ -182,19 +173,25 @@ data PlayerState = PlayerState
   } deriving (Read, Show, Eq, Ord)
 
 data Paddle = Paddle
-  { pWidth  :: GLfloat
-  , pHeight :: GLfloat
-  , pSpeed  :: GLfloat
+  { pSpeed  :: GLfloat
   , pPos    :: (GLfloat,GLfloat)
   } deriving (Read, Show, Eq, Ord)
 
+zeroBall :: Ball
+zeroBall = Ball 0 0 (100,100)
+
+ballDiam :: GLfloat
+ballDiam = 10
+
 mkPaddle :: Paddle
 mkPaddle = Paddle
-  { pWidth  = 10
-  , pHeight = 100
-  , pSpeed  = 1000
+  { pSpeed  = 1000
   , pPos    = (0,0)
   }
+
+paddleWidth, paddleHeight :: GLfloat
+paddleWidth  = 10
+paddleHeight = 100
 
 mkPlayer :: PlayerState
 mkPlayer = PlayerState
@@ -220,15 +217,15 @@ instance VectorSpace CFloat CFloat where
 
 movingBall :: SF (Event External) (Event (IO Bool))
 movingBall = proc e -> do
-  (w',h') <- accumHold (0,0) -< (\b _ -> b) <$> filterResize e
+  (w',h') <- hold (0,0) -< filterResize e
   let input    = filterKeyInput e
       graphics = filterGraphics e
       tick     = filterPhysics  e
       (w,h)    = (fromIntegral w', fromIntegral h')
       rPaddle  = mkPaddle { pPos = rInitPos }
       lPaddle  = mkPaddle { pPos = lInitPos }
-      rInitPos = ( w / 2 - pWidth rPaddle - 10, 0)
-      lInitPos = (-w / 2                  + 10, 0)
+      rInitPos = ( w / 2 - paddleWidth - 10, 0)
+      lInitPos = (-w / 2               + 10, 0)
   -- left/right arrows control the "Left" player's paddle
   lp <- leftPos  -< ((w,h), pSpeed rPaddle, input)
   -- up/down arrows control the "Right" player's paddle
@@ -248,8 +245,8 @@ movingBall = proc e -> do
   where
   moveBall :: (GLfloat,GLfloat) -> Ball -> Ball
   moveBall (x,y) b = b
-    { ballX = ballX b + x
-    , ballY = ballY b + y }
+    { bX = bX b + x
+    , bY = bY b + y }
 
   handleQuit :: a -> IO Bool
   handleQuit  _  = shutdown
@@ -265,10 +262,9 @@ movingBall = proc e -> do
   -- where we calculate the position according to physics
   ballPos :: SF ((Paddle,Paddle),(GLfloat,GLfloat),Event a) (GLfloat,GLfloat)
   ballPos = proc ((lPaddle,rPaddle),(w,h),e) -> mdo
-    -- TODO: this -10 is to adjust for the width of the ball
-    let ceilingFloorCollision = collision (-h/2,h/2-10) y
-        wallCollision         = collision (-w/2,w/2-10) x
-        paddleCollisions      = paddleCollision lPaddle (x,y) || paddleCollision rPaddle (x+10,y)
+    let ceilingFloorCollision = collision (-h/2,h/2-ballDiam) y
+        wallCollision         = collision (-w/2,w/2-ballDiam) x
+        paddleCollisions      = paddleCollision lPaddle (x,y) || paddleCollision rPaddle (x+ballDiam,y)
         reflect               = \b v -> if b then -v else v
     -- Correctly computing collisions here is sensitive to the velocity. If the
     -- velocity is high enough then the ball will actually travel into the thing it
@@ -277,13 +273,13 @@ movingBall = proc e -> do
     vy    <- accumHold 100 -< e `tag` reflect ceilingFloorCollision
     (x,y) <- integral      -< (vx,vy)
     returnA -< (x,y)
-
+  
   collision :: (GLfloat,GLfloat) -> GLfloat -> Bool
   collision (min',max') a = a <= min' || a >= max'
 
   paddleCollision :: Paddle -> (GLfloat,GLfloat) -> Bool
-  paddleCollision p (x,y) = pX <= x && x <= pX + pWidth  p &&
-                            pY <= y && y <= pY + pHeight p
+  paddleCollision p (x,y) = pX <= x && x <= pX + paddleWidth  &&
+                            pY <= y && y <= pY + paddleHeight
     where
     (pX,pY) = pPos p
 
@@ -295,8 +291,7 @@ movingBall = proc e -> do
     db <- isDownPressed -< e
     ub <- isUpPressed   -< e
     dv <- pos           -< ((0,-speed), db && (-h/2 <= y))
-    -- TODO: pass in paddle dimensions
-    uv <- pos           -< ((0, speed), ub && (y <= h/2 - 100))
+    uv <- pos           -< ((0, speed), ub && (y <= h/2 - paddleHeight))
     (x,y) <- integral   -< dv ^+^ uv
     returnA -< (x,y)
 
@@ -305,14 +300,13 @@ movingBall = proc e -> do
     lb <- isLeftPressed  -< e
     rb <- isRightPressed -< e
     dv <- pos            -< ((0,-speed), lb && (-h/2 <= y))
-    -- TODO: pass in paddle dimensions
-    uv <- pos            -< ((0, speed), rb && (y <= h/2 - 100))
+    uv <- pos            -< ((0, speed), rb && (y <= h/2 - paddleHeight))
     (x,y) <- integral    -< dv ^+^ uv
     returnA -< (x,y)
 
   isPressed :: ((GLFW.Key,Bool) -> Bool) -> SF (Event (GLFW.Key,Bool)) Bool
   isPressed p = proc e -> do
-    accumHold False -< (\b _ -> snd b) <$> filterE p e
+    hold False -< snd <$> filterE p e
 
   isRightPressed :: SF (Event (GLFW.Key,Bool)) Bool
   isRightPressed = isPressed (\(k,_) -> k == GLFW.KeyRight)
@@ -325,6 +319,8 @@ movingBall = proc e -> do
 
 gameLoop :: SF (Event External) (Event (IO Bool)) -> IO ()
 gameLoop sf = do
+    -- NOTE: This game loop probably violates an invariant of yampa
+    -- by passing 0 for DTime in places
     start <- T.getCurrentTime
 
     let getTime = fromRational . toRational . flip T.diffUTCTime start <$> T.getCurrentTime
@@ -354,8 +350,8 @@ gameLoop sf = do
       curTime <- readIORef curTimeRef
       newTime <- getTime
       let frameTime = min 0.25 (newTime - curTime)
-      writeIORef curTimeRef newTime
-      modifyIORef accRef (+ frameTime)
+      writeIORef  curTimeRef newTime
+      modifyIORef accRef     (+ frameTime)
       while ((>= dt) <$> readIORef accRef) $ do
         -- t <- readIORef tRef
         void (react rh (dt, Just (Event Physics)))
