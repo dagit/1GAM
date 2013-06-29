@@ -331,26 +331,40 @@ gameLoop sf = do
         initialization = return NoEvent
         actuate _ _ NoEvent   = return False
         actuate _ _ (Event b) = b
-
+        while :: Monad m => m Bool -> m a -> m ()
+        while mb ma = do
+          b <- mb
+          if b then ma >> while mb ma else return ()
     rh <- reactInit initialization actuate sf
 
-    clock <- newIORef =<< getTime
-    let sense ev = do
-          t0 <- readIORef clock 
-          t1 <- getTime
-
-          let dt = t1 - t0
-          writeIORef clock t1
-          void (react rh (dt, Just (Event ev)))
-
     -- register the funciton called when our window is resized
-    GLFW.setWindowSizeCallback  (\w h -> resizeScene w h >> sense (Resize (w,h)))
-    
-    GLFW.setKeyCallback (\k b -> sense (KeyInput (k,b)))
+    GLFW.setWindowSizeCallback (\w h -> resizeScene w h >> void (react rh (0, Just (Event (Resize (w,h))))))
+   
+    -- register the keypress callback 
+    GLFW.setKeyCallback (\k b -> void (react rh (0, Just (Event (KeyInput (k,b))))))
 
     -- gameloop
+    -- The timing code in the gameloop is from here: http://gafferongames.com/game-physics/fix-your-timestep/
+    let dt = 0.01 -- The physics is simple so we use a very small dt for now and avoid the linear interpolation
+    curTimeRef <- newIORef =<< getTime
+    accRef     <- newIORef 0
+    -- TODO: we don't currently pass elapsed time to the physics code
+    -- tRef       <- newIORef 0
     forever $ do
-      GLFW.pollEvents
-      sense Physics
-      sense Graphics
+      curTime <- readIORef curTimeRef
+      newTime <- getTime
+      let frameTime = min 0.25 (newTime - curTime)
+      writeIORef curTimeRef newTime
+      modifyIORef accRef (+ frameTime)
+      while ((>= dt) <$> readIORef accRef) $ do
+        -- t <- readIORef tRef
+        void (react rh (dt, Just (Event Physics)))
+        -- writeIORef  tRef   (t + dt)
+        modifyIORef accRef (subtract dt)
+      -- TODO: add linear interpolation step
+      -- acc <- readIORef accRef
+      -- let alpha = acc / dt
+      -- putStrLn ("alpha = " ++ show alpha)
+      -- void (react rh (alpha, Just (Event Lerp)))
+      void (react rh (0, Just (Event Graphics)))
       GLFW.swapBuffers
