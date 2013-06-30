@@ -48,10 +48,12 @@ shutdown = do
   return True
 
 drawScene :: (GLfloat,GLfloat) -> GameState -> IO ()
-drawScene (w,_) gs = do
+drawScene (w,h) gs = do
   let ball    = gsBall gs
       rPaddle = psPaddle (gsRPlayer gs)
       lPaddle = psPaddle (gsLPlayer gs)
+      lScore  = psScore (gsLPlayer gs)
+      rScore  = psScore (gsRPlayer gs)
   -- clear the screen and the depth buffer
   glClear $ fromIntegral  $  gl_COLOR_BUFFER_BIT
                          .|. gl_DEPTH_BUFFER_BIT
@@ -84,8 +86,157 @@ drawScene (w,_) gs = do
     glVertex2f   1  d      -- bottom right
     glVertex2f (-1) d      -- bottom left
     glEnd
- 
+
+
+  -- Draw the scores
+  -- Left player score
+  glTranslatef (-w/4) (h/2-40) 0
+  drawNumber lScore
+  -- Right player score
+  glTranslatef (w/2) 0 0
+  drawNumber rScore
+
   glFlush
+
+drawNumber :: Int -> IO ()
+drawNumber n = let ds = map (\x -> read [x]) (show n) :: [Int]
+  in mapM_ (\d -> drawDigit d >> glTranslatef 20 0 0) ds
+  where
+  drawDigit :: Int -> IO ()
+  drawDigit 0 = zero
+  drawDigit 1 = one
+  drawDigit 2 = two
+  drawDigit 3 = three
+  drawDigit 4 = four
+  drawDigit 5 = five
+  drawDigit 6 = six
+  drawDigit 7 = seven
+  drawDigit 8 = eight
+  drawDigit 9 = nine
+  drawDigit _ = return ()
+
+rect :: (GLfloat,GLfloat) -> (GLfloat,GLfloat) -> (GLfloat,GLfloat) -> (GLfloat,GLfloat) -> IO ()
+rect (tl1,tl2) (tr1,tr2) (br1,br2) (bl1,bl2) = do
+  glBegin gl_QUADS
+  glVertex2f tl1 tl2
+  glVertex2f tr1 tr2
+  glVertex2f br1 br2
+  glVertex2f bl1 bl2
+  glEnd
+
+vSegment, hSegment :: IO ()
+vSegment = rect (0,30) (2 ,30) (2 ,0) (0,0)
+hSegment = rect (0,2)  (12,2)  (12,0) (0,0)
+
+vHalfSegment, hHalfSegment :: IO ()
+vHalfSegment = rect (0,15) (2,15) (2,0) (0,0)
+hHalfSegment = rect (0,2)  (6,2)  (6,0) (0,0)
+
+zero :: IO ()
+zero = do
+  vSegment
+  glTranslatef 12 0 0
+  vSegment
+  glTranslatef (-12) 0 0
+  hSegment
+  glTranslatef 0 28 0
+  hSegment
+  glTranslatef 0 (-28) 0
+
+one :: IO ()
+one = do
+  glTranslatef 12 0 0
+  vSegment
+  glTranslatef (-12) 0 0
+
+two :: IO ()
+two = do
+  hSegment
+  vHalfSegment
+  glTranslatef 0 15 0
+  hSegment
+  glTranslatef 12 0 0
+  vHalfSegment
+  glTranslatef (-12) 13 0
+  hSegment
+  glTranslatef 0 (-28) 0
+
+three :: IO ()
+three = do
+  hSegment
+  glTranslatef 0 15 0
+  hSegment
+  glTranslatef 0 13 0
+  hSegment
+  glTranslatef 12 (-28) 0
+  vSegment
+  glTranslatef (-12) 0 0
+
+four :: IO ()
+four = do
+  glTranslatef 12 0 0
+  vSegment
+  glTranslatef (-12) 15 0
+  hSegment
+  vHalfSegment
+  glTranslatef (12) (-2) 0
+  vHalfSegment
+  glTranslatef (-12) (-13) 0
+
+five :: IO ()
+five = do
+  hSegment
+  glTranslatef 12 0 0
+  vHalfSegment
+  glTranslatef (-12) 13 0
+  hSegment
+  vHalfSegment
+  glTranslatef 0 15 0
+  hSegment
+  glTranslatef 0 (-28) 0
+
+six :: IO ()
+six = do
+  hSegment
+  vSegment
+  glTranslatef 10 0 0
+  vHalfSegment
+  glTranslatef (-10) 15 0
+  hSegment
+  glTranslatef 0 13 0
+  hSegment
+  glTranslatef 0 (-28) 0
+
+seven :: IO ()
+seven = do
+  glTranslatef 12 0 0
+  vSegment
+  glTranslatef (-12) 28 0
+  hSegment
+  glTranslatef 0 (-28) 0
+
+eight :: IO ()
+eight = do
+  hSegment
+  vSegment
+  glTranslatef 0 15 0
+  hSegment
+  glTranslatef 0 13 0
+  hSegment
+  glTranslatef 12 (-28) 0
+  vSegment
+  glTranslatef (-12) 0 0
+
+nine :: IO ()
+nine = do
+  glTranslatef 12 0 0
+  vSegment
+  glTranslatef (-12) 15 0
+  hSegment
+  vHalfSegment
+  glTranslatef 0 13 0
+  hSegment
+  glTranslatef 0 (-28) 0
 --------------------------------------------------------------------------
 
 
