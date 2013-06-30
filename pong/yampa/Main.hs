@@ -395,7 +395,7 @@ isCollision None = False
 isCollision _    = True
 
 movingBall :: RandomGen g => g -> SF (Event External) (Event (IO Bool))
-movingBall g = proc e -> do
+movingBall g = proc e -> mdo
   (w',h') <- hold (0,0) -< filterResize e
   let input    = filterKeyInput e
       graphics = filterGraphics e
@@ -407,7 +407,7 @@ movingBall g = proc e -> do
       lPaddle  = mkPaddle { pPos = lInitPos }
       rInitPos = ( w / 2 - paddleWidth - 10, 0)
       lInitPos = (-w / 2               + 10, 0)
-  -- left/right arrows control the "Left" player's paddle
+  -- w/s kes (, and o for dvorak) control the "Left" player's paddle
   lp <- leftPos  -< ((w,h), pSpeed rPaddle, input)
   -- up/down arrows control the "Right" player's paddle
   rp <- rightPos -< ((w,h), pSpeed lPaddle, input)
@@ -420,8 +420,11 @@ movingBall g = proc e -> do
   initDirY <- (\b -> if b then 1 else -1) ^<< noiseR (False,True) g'' -< newBall
   initMagX <- noiseR (100,200) g'''  -< newBall
   initMagY <- noiseR (100,200) g'''' -< newBall
-  (bp,ce) <- ballPos -< (newBall `tag` (initDirX*initMagX,initDirY*initMagY)
-                        ,(psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
+  -- Note: This switch is brittle. For example, if you change to rSwitch then you get
+  -- a cycle and ghc prints <<loop>>
+  (bp,ce) <- drSwitch ballPos -< ((newBall `tag` (initDirX*initMagX,initDirY*initMagY)
+                                  ,(psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
+                                 ,ce `tag` ballPos)
   rScore <- accumHold 0 -< filterE (\x -> x == Min) ce `tag` (+1)
   lScore <- accumHold 0 -< filterE (\x -> x == Max) ce `tag` (+1)
   let ball      = moveBall bp zeroBall
@@ -457,6 +460,7 @@ movingBall g = proc e -> do
     let ceilingFloorCollision = isCollision (collision (-h/2,h/2-ballDiam) y)
         wallCollisionTest     = collision (-w/2,w/2-ballDiam) x
         wallCollision         = isCollision wallCollisionTest
+        collisionEvent        = e `tag` wallCollisionTest
         paddleCollisions      = paddleCollision lPaddle (x,y) || paddleCollision rPaddle (x+ballDiam,y)
         reflect               = \b v -> if b then -v else v
     -- Correctly computing collisions here is sensitive to the velocity. If the
@@ -466,7 +470,7 @@ movingBall g = proc e -> do
     vx <- accumHold 1 -< e `tag` reflect (wallCollision || paddleCollisions)
     vy <- accumHold 1 -< e `tag` reflect ceilingFloorCollision
     (x,y) <- rSwitch integral -< ((vx*iVx,vy*iVy),initV `tag` integral)
-    returnA -< ((x,y),e `tag` wallCollisionTest)
+    returnA -< ((x,y),filterE isCollision collisionEvent)
 
   collision :: (GLfloat,GLfloat) -> GLfloat -> Collision
   collision (min',max') a = case (a <= min', a >= max') of
