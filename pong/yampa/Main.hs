@@ -384,6 +384,16 @@ instance VectorSpace CFloat CFloat where
     x1 ^-^ x2 = x1 - x2
     x1 `dot` x2 = x1 * x2
 
+data Collision
+  = None
+  | Min
+  | Max
+  deriving (Read,Show,Eq,Ord)
+
+isCollision :: Collision -> Bool
+isCollision None = False
+isCollision _    = True
+
 movingBall :: RandomGen g => g -> SF (Event External) (Event (IO Bool))
 movingBall g = proc e -> do
   (w',h') <- hold (0,0) -< filterResize e
@@ -410,14 +420,19 @@ movingBall g = proc e -> do
   initDirY <- (\b -> if b then 1 else -1) ^<< noiseR (False,True) g'' -< newBall
   initMagX <- noiseR (100,200) g'''  -< newBall
   initMagY <- noiseR (100,200) g'''' -< newBall
-  bp <- ballPos -< (newBall `tag` (initDirX*initMagX,initDirY*initMagY),(psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
+  (bp,ce) <- ballPos -< (newBall `tag` (initDirX*initMagX,initDirY*initMagY)
+                        ,(psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
+  rScore <- accumHold 0 -< filterE (\x -> x == Min) ce `tag` (+1)
+  lScore <- accumHold 0 -< filterE (\x -> x == Max) ce `tag` (+1)
   let ball      = moveBall bp zeroBall
-      gameState = mkGameState { gsRPlayer = rPlayer
-                              , gsLPlayer = lPlayer
+      gameState = mkGameState { gsRPlayer = rPlayer { psScore = rScore }
+                              , gsLPlayer = lPlayer { psScore = lScore }
                               , gsBall    = ball }
   returnA -< ((\_ -> drawScene (w,h) gameState >> return True) <$> graphics) `rMerge`
              (handleQuit <$> filterE (\(k,b) -> k == GLFW.KeyEsc && b) input)
   where
+  -- Ugh. We have to manually split the g to avoid
+  -- using the same random seed everywhere :(
   (g',g'')     = split g
   (g''',g'''') = split g''
   moveBall :: (GLfloat,GLfloat) -> Ball -> Ball
@@ -437,10 +452,11 @@ movingBall g = proc e -> do
   -- type of ballPos update (where we make sure it's in bounds)
   -- and a different type of update when it's a tick event
   -- where we calculate the position according to physics
-  ballPos :: SF (Event (GLfloat,GLfloat),(Paddle,Paddle),(GLfloat,GLfloat),Event a) (GLfloat,GLfloat)
+  ballPos :: SF (Event (GLfloat,GLfloat),(Paddle,Paddle),(GLfloat,GLfloat),Event a) ((GLfloat,GLfloat),Event Collision)
   ballPos = proc (initV,(lPaddle,rPaddle),(w,h),e) -> mdo
-    let ceilingFloorCollision = collision (-h/2,h/2-ballDiam) y
-        wallCollision         = collision (-w/2,w/2-ballDiam) x
+    let ceilingFloorCollision = isCollision (collision (-h/2,h/2-ballDiam) y)
+        wallCollisionTest     = collision (-w/2,w/2-ballDiam) x
+        wallCollision         = isCollision wallCollisionTest
         paddleCollisions      = paddleCollision lPaddle (x,y) || paddleCollision rPaddle (x+ballDiam,y)
         reflect               = \b v -> if b then -v else v
     -- Correctly computing collisions here is sensitive to the velocity. If the
@@ -449,13 +465,15 @@ movingBall g = proc e -> do
     (iVx,iVy) <- hold (0,0) -< initV
     vx <- accumHold 1 -< e `tag` reflect (wallCollision || paddleCollisions)
     vy <- accumHold 1 -< e `tag` reflect ceilingFloorCollision
-    -- rSwitch :: SF a b -> SF (a, Event (SF a b)) b
-    --(x,y) <- integral -< (vx*iVx,vy*iVy)
     (x,y) <- rSwitch integral -< ((vx*iVx,vy*iVy),initV `tag` integral)
-    returnA -< (x,y)
+    returnA -< ((x,y),e `tag` wallCollisionTest)
 
-  collision :: (GLfloat,GLfloat) -> GLfloat -> Bool
-  collision (min',max') a = a <= min' || a >= max'
+  collision :: (GLfloat,GLfloat) -> GLfloat -> Collision
+  collision (min',max') a = case (a <= min', a >= max') of
+    (False,False) -> None
+    (True ,False) -> Min
+    (False,True ) -> Max
+    (True ,True ) -> Min -- This should never happen
 
   paddleCollision :: Paddle -> (GLfloat,GLfloat) -> Bool
   paddleCollision p (x,y) = pX <= x && x <= pX + paddleWidth  &&
