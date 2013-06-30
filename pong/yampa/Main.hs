@@ -397,17 +397,18 @@ isCollision _    = True
 movingBall :: RandomGen g => g -> SF (Event External) (Event (IO Bool))
 movingBall g = proc e -> mdo
   (w',h') <- hold (0,0) -< filterResize e
-  let input    = filterKeyInput e
-      graphics = filterGraphics e
-      tick     = filterPhysics  e
+  let input     = filterKeyInput e
+      graphics  = filterGraphics e
+      tick      = filterPhysics  e
+      spacebar  = const () <$> filterE (\(k,b) -> k == GLFW.CharKey ' ' && b) input
       -- TODO: For now, a 'new ball' is served when space is pressed
-      newBall  = const () <$> filterE (\(k,b) -> k == GLFW.CharKey ' ' && b) input
-      (w,h)    = (fromIntegral w', fromIntegral h')
-      rPaddle  = mkPaddle { pPos = rInitPos }
-      lPaddle  = mkPaddle { pPos = lInitPos }
-      rInitPos = ( w / 2 - paddleWidth - 10, 0)
-      lInitPos = (-w / 2               + 10, 0)
-  -- w/s kes (, and o for dvorak) control the "Left" player's paddle
+      serveBall = spacebar `gate` True
+      (w,h)     = (fromIntegral w', fromIntegral h')
+      rPaddle   = mkPaddle { pPos = rInitPos }
+      lPaddle   = mkPaddle { pPos = lInitPos }
+      rInitPos  = ( w / 2 - paddleWidth - 10, 0)
+      lInitPos  = (-w / 2               + 10, 0)
+  -- w/s keys (, and o for dvorak) control the "Left" player's paddle
   lp <- leftPos  -< ((w,h), pSpeed rPaddle, input)
   -- up/down arrows control the "Right" player's paddle
   rp <- rightPos -< ((w,h), pSpeed lPaddle, input)
@@ -416,17 +417,17 @@ movingBall g = proc e -> mdo
       lPlayer = mkPlayer { psPaddle = lPaddle { pPos = lPos } }
       rPos    = rp ^+^ pPos rPaddle
       lPos    = lp ^+^ pPos lPaddle
-  initDirX <- (\b -> if b then 1 else -1) ^<< noiseR (False,True) g'  -< newBall
-  initDirY <- (\b -> if b then 1 else -1) ^<< noiseR (False,True) g'' -< newBall
-  initMagX <- noiseR (100,200) g'''  -< newBall
-  initMagY <- noiseR (100,200) g'''' -< newBall
+  initDirX <- (\b -> if b then 1 else -1) ^<< noiseR (False,True) g'  -< serveBall
+  initDirY <- (\b -> if b then 1 else -1) ^<< noiseR (False,True) g'' -< serveBall
+  initMagX <- noiseR (100,200) g'''  -< serveBall
+  initMagY <- noiseR (100,200) g'''' -< serveBall
   -- Note: This switch is brittle. For example, if you change to rSwitch then you get
   -- a cycle and ghc prints <<loop>>
-  (bp,ce) <- drSwitch ballPos -< ((newBall `tag` (initDirX*initMagX,initDirY*initMagY)
-                                  ,(psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
-                                 ,ce `tag` ballPos)
-  rScore <- accumHold 0 -< filterE (\x -> x == Min) ce `tag` (+1)
-  lScore <- accumHold 0 -< filterE (\x -> x == Max) ce `tag` (+1)
+  (bp,ce)  <- drSwitch ballPos -< ((serveBall `tag` (initDirX*initMagX,initDirY*initMagY)
+                                   ,(psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
+                                  ,ce `tag` ballPos)
+  rScore <- accumHold 0 -< filterE (== Min) ce `tag` (+1)
+  lScore <- accumHold 0 -< filterE (== Max) ce `tag` (+1)
   let ball      = moveBall bp zeroBall
       gameState = mkGameState { gsRPlayer = rPlayer { psScore = rScore }
                               , gsLPlayer = lPlayer { psScore = lScore }
