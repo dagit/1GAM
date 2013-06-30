@@ -3,19 +3,18 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 module Main where
 
-import Control.Monad ( forever, void )
+import Control.Applicative
+import Control.Monad ( forever, void, forM_ )
 import Data.Bits ( (.|.) )
 import Data.IORef
 import FRP.Yampa
-import Control.Monad (forM_)
-import Control.Applicative
+import Foreign.C.Types (CFloat)
 import Graphics.Rendering.OpenGL.Raw
 import System.Exit ( exitWith, ExitCode(..) )
-import Foreign.C.Types (CFloat)
 import System.IO
-import qualified Graphics.UI.GLFW as GLFW
-
+import System.Random
 import qualified Data.Time as T
+import qualified Graphics.UI.GLFW as GLFW
 
 initGL :: IO ()
 initGL = do
@@ -48,8 +47,8 @@ shutdown = do
   _ <- exitWith ExitSuccess
   return True
 
-drawScene :: GameState -> IO ()
-drawScene gs = do
+drawScene :: (GLfloat,GLfloat) -> GameState -> IO ()
+drawScene (w,_) gs = do
   let ball    = gsBall gs
       rPaddle = psPaddle (gsRPlayer gs)
       lPaddle = psPaddle (gsLPlayer gs)
@@ -75,6 +74,15 @@ drawScene gs = do
     glVertex2f (paddleX+paddleWidth) (paddleY+paddleHeight) -- top right
     glVertex2f (paddleX+paddleWidth) paddleY                -- bottom right
     glVertex2f paddleX               paddleY                -- bottom left
+    glEnd
+
+  -- Dotted line for the net
+  forM_ [-w/2,-w/2+35..w/2] $ \d -> do
+    glBegin gl_QUADS
+    glVertex2f (-1) (d+25) -- top left
+    glVertex2f   1  (d+25) -- top right
+    glVertex2f   1  d      -- bottom right
+    glVertex2f (-1) d      -- bottom left
     glEnd
  
   glFlush
@@ -109,7 +117,8 @@ main = do
   GLFW.setWindowTitle "pong"
   GLFW.setWindowCloseCallback shutdown
   -- start event processing engine
-  gameLoop movingBall
+  g <- newStdGen
+  gameLoop (movingBall g)
 
 type GameNetworkDescription = SF (Event External)  -- ^ user input
                                  (Event (IO Bool)) -- ^ graphics to be sampled
@@ -117,7 +126,9 @@ type GameNetworkDescription = SF (Event External)  -- ^ user input
 data External = KeyInput (GLFW.Key,Bool)
               | Graphics
               | Physics
+              | NewBall
               | Resize (Int,Int)
+  deriving (Read,Show,Eq,Ord)
 
 isKeyInput :: External -> Bool
 isKeyInput (KeyInput{}) = True
@@ -134,6 +145,10 @@ isPhysics _       = False
 isResize :: External -> Bool
 isResize (Resize {}) = True
 isResize _           = False
+
+isNewBall :: External -> Bool
+isNewBall NewBall = True
+isNewBall _       = False
 
 fromKeyInput :: External -> (GLFW.Key,Bool)
 fromKeyInput (KeyInput i) = i
@@ -154,6 +169,9 @@ filterKeyInput e = fromKeyInput <$> filterE isKeyInput e
 
 filterResize :: Event (External) -> Event (Int,Int)
 filterResize e = fromResize <$> filterE isResize e
+
+filterNewBall :: Event (External) -> Event ()
+filterNewBall e = const () <$> filterE isNewBall e
 
 data Ball = Ball
   { bX    :: GLfloat
@@ -215,12 +233,14 @@ instance VectorSpace CFloat CFloat where
     x1 ^-^ x2 = x1 - x2
     x1 `dot` x2 = x1 * x2
 
-movingBall :: SF (Event External) (Event (IO Bool))
-movingBall = proc e -> do
+movingBall :: RandomGen g => g -> SF (Event External) (Event (IO Bool))
+movingBall g = proc e -> do
   (w',h') <- hold (0,0) -< filterResize e
   let input    = filterKeyInput e
       graphics = filterGraphics e
       tick     = filterPhysics  e
+      -- TODO: For now, a 'new ball' is served when space is pressed
+      newBall  = const () <$> filterE (\(k,b) -> k == GLFW.CharKey ' ' && b) input
       (w,h)    = (fromIntegral w', fromIntegral h')
       rPaddle  = mkPaddle { pPos = rInitPos }
       lPaddle  = mkPaddle { pPos = lInitPos }
@@ -231,18 +251,24 @@ movingBall = proc e -> do
   -- up/down arrows control the "Right" player's paddle
   rp <- rightPos -< ((w,h), pSpeed lPaddle, input)
   -- The ball's position updates on each physics event
-  let rPlayer   = mkPlayer { psPaddle = rPaddle { pPos = rPos } }
-      lPlayer   = mkPlayer { psPaddle = lPaddle { pPos = lPos } }
-      rPos      = rp ^+^ pPos rPaddle
-      lPos      = lp ^+^ pPos lPaddle
-  bp <- ballPos -< ((psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
+  let rPlayer = mkPlayer { psPaddle = rPaddle { pPos = rPos } }
+      lPlayer = mkPlayer { psPaddle = lPaddle { pPos = lPos } }
+      rPos    = rp ^+^ pPos rPaddle
+      lPos    = lp ^+^ pPos lPaddle
+  initDirX <- (\b -> if b then 1 else -1) ^<< noiseR (False,True) g'  -< newBall
+  initDirY <- (\b -> if b then 1 else -1) ^<< noiseR (False,True) g'' -< newBall
+  initMagX <- noiseR (100,200) g'''  -< newBall
+  initMagY <- noiseR (100,200) g'''' -< newBall
+  bp <- ballPos -< (newBall `tag` (initDirX*initMagX,initDirY*initMagY),(psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
   let ball      = moveBall bp zeroBall
       gameState = mkGameState { gsRPlayer = rPlayer
                               , gsLPlayer = lPlayer
                               , gsBall    = ball }
-  returnA -< ((\_ -> drawScene gameState >> return True) <$> graphics) `rMerge`
+  returnA -< ((\_ -> drawScene (w,h) gameState >> return True) <$> graphics) `rMerge`
              (handleQuit <$> filterE (\(k,b) -> k == GLFW.KeyEsc && b) input)
   where
+  (g',g'')     = split g
+  (g''',g'''') = split g''
   moveBall :: (GLfloat,GLfloat) -> Ball -> Ball
   moveBall (x,y) b = b
     { bX = bX b + x
@@ -260,8 +286,8 @@ movingBall = proc e -> do
   -- type of ballPos update (where we make sure it's in bounds)
   -- and a different type of update when it's a tick event
   -- where we calculate the position according to physics
-  ballPos :: SF ((Paddle,Paddle),(GLfloat,GLfloat),Event a) (GLfloat,GLfloat)
-  ballPos = proc ((lPaddle,rPaddle),(w,h),e) -> mdo
+  ballPos :: SF (Event (GLfloat,GLfloat),(Paddle,Paddle),(GLfloat,GLfloat),Event a) (GLfloat,GLfloat)
+  ballPos = proc (initV,(lPaddle,rPaddle),(w,h),e) -> mdo
     let ceilingFloorCollision = collision (-h/2,h/2-ballDiam) y
         wallCollision         = collision (-w/2,w/2-ballDiam) x
         paddleCollisions      = paddleCollision lPaddle (x,y) || paddleCollision rPaddle (x+ballDiam,y)
@@ -269,11 +295,14 @@ movingBall = proc e -> do
     -- Correctly computing collisions here is sensitive to the velocity. If the
     -- velocity is high enough then the ball will actually travel into the thing it
     -- should be colliding with leading to hillarious results.
-    vx    <- accumHold 100 -< e `tag` reflect (wallCollision || paddleCollisions)
-    vy    <- accumHold 100 -< e `tag` reflect ceilingFloorCollision
-    (x,y) <- integral      -< (vx,vy)
+    (iVx,iVy) <- hold (0,0) -< initV
+    vx <- accumHold 1 -< e `tag` reflect (wallCollision || paddleCollisions)
+    vy <- accumHold 1 -< e `tag` reflect ceilingFloorCollision
+    -- rSwitch :: SF a b -> SF (a, Event (SF a b)) b
+    --(x,y) <- integral -< (vx*iVx,vy*iVy)
+    (x,y) <- rSwitch integral -< ((vx*iVx,vy*iVy),initV `tag` integral)
     returnA -< (x,y)
-  
+
   collision :: (GLfloat,GLfloat) -> GLfloat -> Bool
   collision (min',max') a = a <= min' || a >= max'
 
@@ -283,9 +312,7 @@ movingBall = proc e -> do
     where
     (pX,pY) = pPos p
 
-  -- rightPos and leftPos actually control the "Left" players
-  -- paddle's vertical position. That's why the argument to
-  -- pos might look funny.
+  -- | Controls the vertical position of the right paddle
   rightPos :: SF ((GLfloat,GLfloat),GLfloat, Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
   rightPos = proc ((_,h),speed,e) -> mdo
     db <- isDownPressed -< e
@@ -295,12 +322,16 @@ movingBall = proc e -> do
     (x,y) <- integral   -< dv ^+^ uv
     returnA -< (x,y)
 
+  -- | Controls the vertical position of the left paddle
   leftPos :: SF ((GLfloat,GLfloat),GLfloat,Event (GLFW.Key, Bool)) (GLfloat, GLfloat)
   leftPos = proc ((_,h),speed,e) -> mdo
-    lb <- isLeftPressed  -< e
-    rb <- isRightPressed -< e
-    dv <- pos            -< ((0,-speed), lb && (-h/2 <= y))
-    uv <- pos            -< ((0, speed), rb && (y <= h/2 - paddleHeight))
+    -- comma and o are support for dvorak users :-)
+    wb <- isWPressed     -< e
+    cb <- isCommaPressed -< e
+    sb <- isSPressed     -< e
+    ob <- isOPressed     -< e
+    dv <- pos            -< ((0,-speed), (sb || ob) && (-h/2 <= y))
+    uv <- pos            -< ((0, speed), (wb || cb) && (y <= h/2 - paddleHeight))
     (x,y) <- integral    -< dv ^+^ uv
     returnA -< (x,y)
 
@@ -308,15 +339,25 @@ movingBall = proc e -> do
   isPressed p = proc e -> do
     hold False -< snd <$> filterE p e
 
-  isRightPressed :: SF (Event (GLFW.Key,Bool)) Bool
-  isRightPressed = isPressed (\(k,_) -> k == GLFW.KeyRight)
-  isLeftPressed  :: SF (Event (GLFW.Key,Bool)) Bool
-  isLeftPressed  = isPressed (\(k,_) -> k == GLFW.KeyLeft)
+  isWPressed     :: SF (Event (GLFW.Key,Bool)) Bool
+  isWPressed     = isPressed (\(k,_) -> k == GLFW.CharKey 'W')
+  isSPressed     :: SF (Event (GLFW.Key,Bool)) Bool
+  isSPressed     = isPressed (\(k,_) -> k == GLFW.CharKey 'S')
+  isCommaPressed :: SF (Event (GLFW.Key,Bool)) Bool
+  isCommaPressed = isPressed (\(k,_) -> k == GLFW.CharKey ',')
+  isOPressed     :: SF (Event (GLFW.Key,Bool)) Bool
+  isOPressed     = isPressed (\(k,_) -> k == GLFW.CharKey 'O')
   isUpPressed    :: SF (Event (GLFW.Key,Bool)) Bool
   isUpPressed    = isPressed (\(k,_) -> k == GLFW.KeyUp)
   isDownPressed  :: SF (Event (GLFW.Key,Bool)) Bool
   isDownPressed  = isPressed (\(k,_) -> k == GLFW.KeyDown)
 
+{- No longer needed
+  isRightPressed :: SF (Event (GLFW.Key,Bool)) Bool
+  isRightPressed = isPressed (\(k,_) -> k == GLFW.KeyRight)
+  isLeftPressed  :: SF (Event (GLFW.Key,Bool)) Bool
+  isLeftPressed  = isPressed (\(k,_) -> k == GLFW.KeyLeft)
+-}
 gameLoop :: SF (Event External) (Event (IO Bool)) -> IO ()
 gameLoop sf = do
     -- NOTE: This game loop probably violates an invariant of yampa

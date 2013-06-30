@@ -35,5 +35,6 @@ executable yampa-pong
                      , GLFW-b
                      , OpenGLRaw
                      , vector-space
+                     , random
   ghc-options:       -Wall -O2
   ghc-prof-options:  -fprof-auto -prof -rtsopts
