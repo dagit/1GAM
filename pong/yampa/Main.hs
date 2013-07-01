@@ -400,7 +400,7 @@ movingBall g = proc e -> mdo
   let input     = filterKeyInput e
       graphics  = filterGraphics e
       tick      = filterPhysics  e
-      spacebar  = const () <$> filterE (\(k,b) -> (k == GLFW.CharKey ' ' || k == GLFW.KeySpace) && b) input
+      spacebar  = () <$ filterE (\(k,b) -> (k == GLFW.CharKey ' ' || k == GLFW.KeySpace) && b) input
       -- TODO: For now, a 'new ball' is served when space is pressed
       serveBall = spacebar `gate` canServe
       (w,h)     = (fromIntegral w', fromIntegral h')
