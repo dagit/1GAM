@@ -396,18 +396,19 @@ isCollision _    = True
 
 movingBall :: RandomGen g => g -> SF (Event External) (Event (IO Bool))
 movingBall g = proc e -> mdo
-  (w',h') <- hold (0,0) -< filterResize e
+  (w',h') <- dHold (0,0) -< filterResize e
   let input     = filterKeyInput e
       graphics  = filterGraphics e
       tick      = filterPhysics  e
-      spacebar  = const () <$> filterE (\(k,b) -> k == GLFW.CharKey ' ' && b) input
+      spacebar  = const () <$> filterE (\(k,b) -> (k == GLFW.CharKey ' ' || k == GLFW.KeySpace) && b) input
       -- TODO: For now, a 'new ball' is served when space is pressed
-      serveBall = spacebar `gate` True
+      serveBall = spacebar `gate` canServe
       (w,h)     = (fromIntegral w', fromIntegral h')
       rPaddle   = mkPaddle { pPos = rInitPos }
       lPaddle   = mkPaddle { pPos = lInitPos }
       rInitPos  = ( w / 2 - paddleWidth - 10, 0)
       lInitPos  = (-w / 2               + 10, 0)
+  canServe <- dHold True -< (serveBall `tag` False) `rMerge` (ce `tag` True)
   -- w/s keys (, and o for dvorak) control the "Left" player's paddle
   lp <- leftPos  -< ((w,h), pSpeed rPaddle, input)
   -- up/down arrows control the "Right" player's paddle
@@ -426,8 +427,8 @@ movingBall g = proc e -> mdo
   (bp,ce)  <- drSwitch ballPos -< ((serveBall `tag` (initDirX*initMagX,initDirY*initMagY)
                                    ,(psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
                                   ,ce `tag` ballPos)
-  rScore <- accumHold 0 -< filterE (== Min) ce `tag` (+1)
-  lScore <- accumHold 0 -< filterE (== Max) ce `tag` (+1)
+  rScore <- dAccumHold 0 -< filterE (== Min) ce `tag` (+1)
+  lScore <- dAccumHold 0 -< filterE (== Max) ce `tag` (+1)
   let ball      = moveBall bp zeroBall
       gameState = mkGameState { gsRPlayer = rPlayer { psScore = rScore }
                               , gsLPlayer = lPlayer { psScore = lScore }
@@ -468,9 +469,9 @@ movingBall g = proc e -> mdo
     -- velocity is high enough then the ball will actually travel into the thing it
     -- should be colliding with leading to hillarious results.
     (iVx,iVy) <- hold (0,0) -< initV
-    vx <- accumHold 1 -< e `tag` reflect (wallCollision || paddleCollisions)
-    vy <- accumHold 1 -< e `tag` reflect ceilingFloorCollision
-    (x,y) <- rSwitch integral -< ((vx*iVx,vy*iVy),initV `tag` integral)
+    vx <- dAccumHold 1 -< e `tag` reflect (wallCollision || paddleCollisions)
+    vy <- dAccumHold 1 -< e `tag` reflect ceilingFloorCollision
+    (x,y) <- drSwitch integral -< ((vx*iVx,vy*iVy),initV `tag` integral)
     returnA -< ((x,y),filterE isCollision collisionEvent)
 
   collision :: (GLfloat,GLfloat) -> GLfloat -> Collision
@@ -511,7 +512,7 @@ movingBall g = proc e -> mdo
 
   isPressed :: ((GLFW.Key,Bool) -> Bool) -> SF (Event (GLFW.Key,Bool)) Bool
   isPressed p = proc e -> do
-    hold False -< snd <$> filterE p e
+    dHold False -< snd <$> filterE p e
 
   isWPressed     :: SF (Event (GLFW.Key,Bool)) Bool
   isWPressed     = isPressed (\(k,_) -> k == GLFW.CharKey 'W')
