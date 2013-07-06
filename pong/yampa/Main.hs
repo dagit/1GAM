@@ -1,7 +1,6 @@
 module Main where
 
 import Pong
-import System.IO
 import System.Random
 import Utils.GLFW
 import Utils.Yampa
@@ -11,7 +10,6 @@ import qualified Graphics.UI.GLFW as GLFW
 
 main :: IO ()
 main = do
-  hSetBuffering stdout NoBuffering
   True <- GLFW.initialize
   -- select type of display mode:
   -- Double buffer
