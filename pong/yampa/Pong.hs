@@ -18,7 +18,6 @@ pong g = proc e -> mdo
       graphics  = filterGraphics e
       tick      = filterPhysics  e
       spacebar  = () <$ filterE (\(k,b) -> (k == GLFW.CharKey ' ' || k == GLFW.KeySpace) && b) input
-      -- TODO: For now, a 'new ball' is served when space is pressed
       serveBall = spacebar `gate` canServe
       (w,h)     = (fromIntegral w', fromIntegral h')
       rPaddle   = mkPaddle { pPos = rInitPos }
