@@ -28,7 +28,10 @@ executable reactive-banana-pong
 executable yampa-pong
   hs-source-dirs:      yampa
   main-is:             Main.hs
-  -- other-modules:       
+  other-modules:       Utils.OpenGL
+                     , Utils.GLFW
+                     , Utils.Yampa
+                     , GameState
   build-depends:       base
                      , time
                      , Yampa
