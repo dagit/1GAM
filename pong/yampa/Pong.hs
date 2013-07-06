@@ -35,8 +35,8 @@ pong g = proc e -> mdo
       lPlayer = mkPlayer { psPaddle = lPaddle { pPos = lPos } }
       rPos    = rp ^+^ pPos rPaddle
       lPos    = lp ^+^ pPos lPaddle
-  initDirX <- (\b -> if b then 1 else -1) ^<< noiseR (False,True) g -< serveBall
-  initDirY <- (\b -> if b then 1 else -1) ^<< noiseR (False,True) g -< serveBall
+  initDirX <- (`reflect` 1) ^<< noise g -< serveBall
+  initDirY <- (`reflect` 1) ^<< noise g -< serveBall
   initMagX <- noiseR (100,200) g -< serveBall
   initMagY <- noiseR (100,200) g -< serveBall
   -- Note: This switch is brittle. For example, if you change to rSwitch then you get
@@ -53,6 +53,8 @@ pong g = proc e -> mdo
   returnA -< ((\_ -> drawScene (w,h) gameState >> return True) <$> graphics) `rMerge`
              (handleQuit <$> filterE (\(k,b) -> k == GLFW.KeyEsc && b) input)
   where
+  reflect :: (Num a) => Bool -> a -> a
+  reflect b v = if b then -v else v
   -- TODO: it would probably be better to separate the width/height
   -- from the tick event so that when the w/h changes there is one
   -- type of ballPos update (where we make sure it's in bounds)
@@ -65,7 +67,6 @@ pong g = proc e -> mdo
         wallCollision         = isCollision wallCollisionTest
         collisionEvent        = e `tag` wallCollisionTest
         paddleCollisions      = paddleCollision lPaddle (x,y) || paddleCollision rPaddle (x+ballDiam,y)
-        reflect               = \b v -> if b then -v else v
     -- Correctly computing collisions here is sensitive to the velocity. If the
     -- velocity is high enough then the ball will actually travel into the thing it
     -- should be colliding with leading to hillarious results.
@@ -86,8 +87,8 @@ pong g = proc e -> mdo
   rightPos = proc ((_,h),speed,e) -> mdo
     db <- isDownPressed -< e
     ub <- isUpPressed   -< e
-    dv <- impl          -< ((0,-speed), db && (-h/2 <= y))
-    uv <- impl          -< ((0, speed), ub && (y <= h/2 - paddleHeight))
+    dv <- impulse (0,0) -< ((0,-speed), db && (-h/2 <= y))
+    uv <- impulse (0,0) -< ((0, speed), ub && (y <= h/2 - paddleHeight))
     (x,y) <- integral   -< dv ^+^ uv
     returnA -< (x,y)
 
@@ -99,7 +100,7 @@ pong g = proc e -> mdo
     cb <- isCommaPressed -< e
     sb <- isSPressed     -< e
     ob <- isOPressed     -< e
-    dv <- impl           -< ((0,-speed), (sb || ob) && (-h/2 <= y))
-    uv <- impl           -< ((0, speed), (wb || cb) && (y <= h/2 - paddleHeight))
+    dv <- impulse (0,0)  -< ((0,-speed), (sb || ob) && (-h/2 <= y))
+    uv <- impulse (0,0)  -< ((0, speed), (wb || cb) && (y <= h/2 - paddleHeight))
     (x,y) <- integral    -< dv ^+^ uv
     returnA -< (x,y)

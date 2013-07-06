@@ -137,7 +137,7 @@ collision (min',max') a = case (a <= min', a >= max') of
   (True ,True ) -> Min -- This should never happen
 
 -- | Conditional impulse
-impl :: SF ((Float,Float),Bool) (Float,Float)
-impl = proc (p,bool) -> do
-  returnA -< if bool then p else (0,0)
+impulse :: a -> SF (a,Bool) a
+impulse a = proc (p,bool) -> do
+  returnA -< if bool then p else a
 
