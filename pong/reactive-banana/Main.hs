@@ -25,8 +25,8 @@ data Ball = Ball
 zeroBall :: Ball
 zeroBall = Ball 0 0
 
-initGL :: IO ()
-initGL = do
+initGL :: GLFW.Window -> IO ()
+initGL win = do
   glEnable gl_TEXTURE_2D
   glShadeModel gl_SMOOTH
   glClearColor 0 0 0 0
@@ -34,12 +34,14 @@ initGL = do
   glEnable gl_DEPTH_TEST
   glDepthFunc gl_LEQUAL
   glHint gl_PERSPECTIVE_CORRECTION_HINT gl_NICEST
+  (w,h) <- GLFW.getFramebufferSize win
+  resizeScene win w h
 
 --------------------------------------------------------------------------
 -- GLFW callbacks
 resizeScene :: GLFW.WindowSizeCallback
-resizeScene w     0      = resizeScene w 1 -- prevent divide by zero
-resizeScene width height = do
+resizeScene win w     0      = resizeScene win w 1 -- prevent divide by zero
+resizeScene _   width height = do
   glViewport 0 0 (fromIntegral width) (fromIntegral height)
   glMatrixMode gl_PROJECTION
   glLoadIdentity
@@ -50,11 +52,11 @@ resizeScene width height = do
   glFlush
 
 shutdown :: GLFW.WindowCloseCallback
-shutdown = do
-  GLFW.closeWindow
+shutdown win = do
+  GLFW.destroyWindow win
   GLFW.terminate
   _ <- exitWith ExitSuccess
-  return True
+  return ()
 
 drawScene :: Ball -> IO ()
 drawScene ball = do
@@ -77,34 +79,22 @@ drawScene ball = do
 main :: IO ()
 main = do
   hSetBuffering stdout NoBuffering
-  True <- GLFW.initialize
+  True <- GLFW.init
   -- select type of display mode:
   -- Double buffer
   -- RGBA color
   -- Alpha components supported
   -- Depth buffer
-  let dspOpts = GLFW.defaultDisplayOptions
-                  -- get a 800 x 600 window
-                  { GLFW.displayOptions_width  = 800
-                  , GLFW.displayOptions_height = 600
-                  -- Set depth buffering and RGBA colors
-                  , GLFW.displayOptions_numRedBits   = 8
-                  , GLFW.displayOptions_numGreenBits = 8
-                  , GLFW.displayOptions_numBlueBits  = 8
-                  , GLFW.displayOptions_numAlphaBits = 8
-                  , GLFW.displayOptions_numDepthBits = 1
-                  -- , GLFW.displayOptions_displayMode = GLFW.Fullscreen
-                  }
+  GLFW.defaultWindowHints
   -- open a window
-  True <- GLFW.openWindow dspOpts
-  -- window starts at upper left corner of the screen
-  GLFW.setWindowPosition 0 0
-  GLFW.setWindowTitle "pong"
+  Just win <- GLFW.createWindow 800 600 "pong" Nothing Nothing
+  GLFW.makeContextCurrent (Just win)
+  initGL win
   -- register the funciton called when our window is resized
-  GLFW.setWindowSizeCallback resizeScene
-  GLFW.setWindowCloseCallback shutdown
+  GLFW.setWindowSizeCallback  win (Just resizeScene)
+  GLFW.setWindowCloseCallback win (Just shutdown)
   -- start event processing engine
-  gameLoop movingBall
+  gameLoop win movingBall
 
 ---- copy & paste from stack overflow and other sources ----
 -- http://stackoverflow.com/questions/12685430/how-to-implement-a-game-loop-in-reactive-banana
@@ -115,15 +105,20 @@ main = do
 -- TODO: this is just a stub and won't work correctly if you
 -- need the time
 getRealTime :: IO Integer
-getRealTime = floor <$> GLFW.getTime
+getRealTime = floor <$> do
+  x <- GLFW.getTime
+  return $ case x of
+   Nothing -> 0
+   Just y  -> y
 
-registerKeyHandler :: ((a -> IO ()) -> GLFW.KeyCallback) -> AddHandler a
-registerKeyHandler handler sink = do
+registerKeyHandler :: GLFW.Window -> ((a -> IO ()) -> GLFW.KeyCallback) -> AddHandler a
+registerKeyHandler win handler sink = do
   putStrLn "called registerKeyHandler"
-  GLFW.setKeyCallback (handler sink)
+  GLFW.setKeyCallback win (Just (handler sink))
   return (return ())
 
-type GameNetworkDescription = forall t. Event    t (GLFW.Key,Bool)       -- ^ user input
+type GameNetworkDescription = forall t. GLFW.Window
+                                     -> Event    t (GLFW.Key,Bool)       -- ^ user input
                                      -> Behavior t Time
                                      -> Event    t ()
                                      -> Moment   t (Behavior t (IO ())) -- ^ graphics to be sampled
@@ -135,9 +130,9 @@ type GameNetworkDescription = forall t. Event    t (GLFW.Key,Bool)       -- ^ us
 (&>) = liftA2 (*>)
 
 movingBall :: GameNetworkDescription
-movingBall input time tick = do
+movingBall win input time tick = do
   return $ (drawScene <$> (moveBall <$> (combinedPos (time <@ tick) input) <*> pure zeroBall)) &>
-           (stepper (return ()) (handleQuit <$> filterE (\(k,b) -> k == GLFW.KeyEsc && b) input))
+           (stepper (return ()) (handleQuit win <$> filterE (\(k,b) -> k == GLFW.Key'Escape && b) input))
 
   where
   moveBall :: (GLfloat,GLfloat) -> Ball -> Ball
@@ -145,9 +140,9 @@ movingBall input time tick = do
     { ballX = ballX b + x
     , ballY = ballY b + y }
 
-  handleQuit :: (GLFW.Key,Bool) -> IO ()
-  handleQuit  (GLFW.KeyEsc ,True)  = void shutdown
-  handleQuit  _                    = return ()
+  handleQuit :: GLFW.Window -> (GLFW.Key,Bool) -> IO ()
+  handleQuit  w (GLFW.Key'Escape ,True)  = void (shutdown w)
+  handleQuit  _ _                        = return ()
 
   pos :: (GLfloat,GLfloat) -> Behavior t Bool -> Behavior t (GLfloat,GLfloat)
   pos p bBool = (\bool b -> if bool then p ^+^ b else b) <$> bBool <*> pure (0,0)
@@ -168,23 +163,24 @@ movingBall input time tick = do
                           <*> ((^+^) <$> upPos    t k  <*> downPos t k)
 
   isRightPressed :: Event t (GLFW.Key,Bool) -> Behavior t Bool
-  isRightPressed e = isPressed (\(k,_) -> k == GLFW.KeyRight) e
+  isRightPressed e = isPressed (\(k,_) -> k == GLFW.Key'Right) e
 
   isLeftPressed :: Event t (GLFW.Key,Bool) -> Behavior t Bool
-  isLeftPressed e = isPressed (\(k,_) -> k == GLFW.KeyLeft) e
+  isLeftPressed e = isPressed (\(k,_) -> k == GLFW.Key'Left) e
 
   isUpPressed :: Event t (GLFW.Key,Bool) -> Behavior t Bool
-  isUpPressed e = isPressed (\(k,_) -> k == GLFW.KeyUp) e
+  isUpPressed e = isPressed (\(k,_) -> k == GLFW.Key'Up) e
 
   isDownPressed :: Event t (GLFW.Key,Bool) -> Behavior t Bool
-  isDownPressed e = isPressed (\(k,_) -> k == GLFW.KeyDown) e
+  isDownPressed e = isPressed (\(k,_) -> k == GLFW.Key'Down) e
 
   isPressed :: ((GLFW.Key,Bool) -> Bool) -> Event t (GLFW.Key,Bool) -> Behavior t Bool
   isPressed p e = accumB False ((\b _ -> snd b) <$> filterE p e)
 
-gameLoop :: GameNetworkDescription -- ^ event network corresponding to the game
+gameLoop :: GLFW.Window
+         -> GameNetworkDescription -- ^ event network corresponding to the game
          -> IO ()
-gameLoop gameNetwork = do
+gameLoop win gameNetwork = do
     -- set up event network
     start <- T.getCurrentTime
     let getTime = toTime . flip T.diffUTCTime start <$> T.getCurrentTime
@@ -198,11 +194,16 @@ gameLoop gameNetwork = do
         ePhysics  <- fromAddHandler ahPhysics
         bTime     <- fromPoll getTime
         eGraphics <- fromAddHandler ahGraphics
-        bGraphics <- gameNetwork eKeyInput bTime ePhysics
+        bGraphics <- gameNetwork win eKeyInput bTime ePhysics
         reactimate $ bGraphics <@ eGraphics
     actuate network
 
-    void (registerKeyHandler curry fireKeyInput)
+--    void (registerKeyHandler uncurry fireKeyInput)
+    void (registerKeyHandler win
+                             (\f _win k _i s _m -> do
+                               f (k,s==GLFW.KeyState'Pressed)
+                               return ())
+                             fireKeyInput)
 
     -- game loop
     forever $ do
@@ -215,7 +216,7 @@ gameLoop gameNetwork = do
       -- graphics
       fireGraphics ()          -- interpolate graphics
 
-      GLFW.swapBuffers
+      GLFW.swapBuffers win
 
 -------------------------------------------------------------------------------
 

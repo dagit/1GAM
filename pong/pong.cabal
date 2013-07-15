@@ -18,7 +18,7 @@ executable reactive-banana-pong
   build-depends:       base
                      , time
                      , reactive-banana
-                     , GLFW-b
+                     , GLFW-b >= 1
                      , OpenGLRaw
                      , active
                      , vector-space
@@ -35,7 +35,7 @@ executable yampa-pong
   build-depends:       base
                      , time
                      , Yampa
-                     , GLFW-b
+                     , GLFW-b >= 1
                      , OpenGLRaw
                      , vector-space
                      , random

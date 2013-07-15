@@ -16,7 +16,7 @@ data External = KeyInput (GLFW.Key,Bool)
               | Physics
               | NewBall
               | Resize (Int,Int)
-  deriving (Read,Show,Eq,Ord)
+  deriving (Show,Eq)
 
 isKeyInput :: External -> Bool
 isKeyInput (KeyInput{}) = True
@@ -61,8 +61,8 @@ filterResize e = fromResize <$> filterE isResize e
 filterNewBall :: Event (External) -> Event ()
 filterNewBall e = const () <$> filterE isNewBall e
 
-gameLoop :: SF (Event External) (Event (IO Bool)) -> IO ()
-gameLoop sf = do
+gameLoop :: GLFW.Window -> SF (Event External) (Event (IO Bool)) -> IO ()
+gameLoop win sf = do
     -- NOTE: This game loop probably violates an invariant of yampa
     -- by passing 0 for DTime in places
     start <- T.getCurrentTime
@@ -78,10 +78,18 @@ gameLoop sf = do
     rh <- reactInit initialization actuate sf
 
     -- register the funciton called when our window is resized
-    GLFW.setWindowSizeCallback (\w h -> resizeScene w h >> void (react rh (0, Just (Event (Resize (w,h))))))
-   
+    GLFW.setFramebufferSizeCallback win $ Just $ \_win w h -> do
+      resizeScene win w h
+      void (react rh (0, Just (Event (Resize (w,h)))))
+ 
+    -- TODO: This really shouldn't be necessary, but for some reason the event
+    -- is not getting sent 
+    (w,h) <- GLFW.getFramebufferSize win
+    void (react rh (0, Just (Event (Resize (w,h))))) 
+
     -- register the keypress callback 
-    GLFW.setKeyCallback (\k b -> void (react rh (0, Just (Event (KeyInput (k,b))))))
+    GLFW.setKeyCallback win (Just $ \_win k _ s _ ->
+      void (react rh (0, Just (Event (KeyInput (k,s==GLFW.KeyState'Pressed))))))
 
     -- gameloop
     -- The timing code in the gameloop is from here: http://gafferongames.com/game-physics/fix-your-timestep/
@@ -91,6 +99,7 @@ gameLoop sf = do
     -- TODO: we don't currently pass elapsed time to the physics code
     -- tRef       <- newIORef 0
     forever $ do
+      GLFW.pollEvents
       curTime <- readIORef curTimeRef
       newTime <- getTime
       let frameTime = min 0.25 (newTime - curTime)
@@ -107,27 +116,27 @@ gameLoop sf = do
       -- putStrLn ("alpha = " ++ show alpha)
       -- void (react rh (alpha, Just (Event Lerp)))
       void (react rh (0, Just (Event Graphics)))
-      GLFW.swapBuffers
+      GLFW.swapBuffers win
 
 isPressed :: ((GLFW.Key,Bool) -> Bool) -> SF (Event (GLFW.Key,Bool)) Bool
 isPressed p = proc e -> do
   dHold False -< snd <$> filterE p e
 
 isWPressed     :: SF (Event (GLFW.Key,Bool)) Bool
-isWPressed     = isPressed (\(k,_) -> k == GLFW.CharKey 'W')
+isWPressed     = isPressed (\(k,_) -> k == GLFW.Key'W)
 isSPressed     :: SF (Event (GLFW.Key,Bool)) Bool
-isSPressed     = isPressed (\(k,_) -> k == GLFW.CharKey 'S')
+isSPressed     = isPressed (\(k,_) -> k == GLFW.Key'S)
 isCommaPressed :: SF (Event (GLFW.Key,Bool)) Bool
-isCommaPressed = isPressed (\(k,_) -> k == GLFW.CharKey ',')
+isCommaPressed = isPressed (\(k,_) -> k == GLFW.Key'Comma)
 isOPressed     :: SF (Event (GLFW.Key,Bool)) Bool
-isOPressed     = isPressed (\(k,_) -> k == GLFW.CharKey 'O')
+isOPressed     = isPressed (\(k,_) -> k == GLFW.Key'O)
 isUpPressed    :: SF (Event (GLFW.Key,Bool)) Bool
-isUpPressed    = isPressed (\(k,_) -> k == GLFW.KeyUp)
+isUpPressed    = isPressed (\(k,_) -> k == GLFW.Key'Up)
 isDownPressed  :: SF (Event (GLFW.Key,Bool)) Bool
-isDownPressed  = isPressed (\(k,_) -> k == GLFW.KeyDown)
+isDownPressed  = isPressed (\(k,_) -> k == GLFW.Key'Down)
 
-handleQuit :: a -> IO Bool
-handleQuit _  = shutdown
+handleQuit :: GLFW.Window -> a -> IO Bool
+handleQuit win _  = shutdown win >> return True
 
 collision :: (Float,Float) -> Float -> Collision
 collision (min',max') a = case (a <= min', a >= max') of

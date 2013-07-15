@@ -22,9 +22,11 @@ import Control.Monad ( forM_ )
 import Data.Bits ( (.|.) )
 import GameState
 import Graphics.Rendering.OpenGL.Raw
+import Graphics.UI.GLFW as GLFW
+import Utils.GLFW
 
-initGL :: IO ()
-initGL = do
+initGL :: GLFW.Window -> IO ()
+initGL win = do
   glEnable gl_TEXTURE_2D
   glShadeModel gl_SMOOTH
   glClearColor 0 0 0 0
@@ -32,6 +34,8 @@ initGL = do
   glEnable gl_DEPTH_TEST
   glDepthFunc gl_LEQUAL
   glHint gl_PERSPECTIVE_CORRECTION_HINT gl_NICEST
+  (w,h) <- GLFW.getFramebufferSize win
+  resizeScene win w h
 
 --------------------------------------------------------------------------
 -- Custom scene renderer

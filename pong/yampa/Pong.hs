@@ -11,13 +11,13 @@ import Utils.OpenGL
 import Utils.Yampa
 import qualified Graphics.UI.GLFW as GLFW
 
-pong :: RandomGen g => g -> SF (Event External) (Event (IO Bool))
-pong g = proc e -> mdo
+pong :: RandomGen g => GLFW.Window -> g -> SF (Event External) (Event (IO Bool))
+pong win g = proc e -> mdo
   (w',h') <- dHold (0,0) -< filterResize e
   let input     = filterKeyInput e
       graphics  = filterGraphics e
       tick      = filterPhysics  e
-      spacebar  = () <$ filterE (\(k,b) -> (k == GLFW.CharKey ' ' || k == GLFW.KeySpace) && b) input
+      spacebar  = () <$ filterE (\(k,b) -> k == GLFW.Key'Space && b) input
       serveBall = spacebar `gate` canServe
       (w,h)     = (fromIntegral w', fromIntegral h')
       rPaddle   = mkPaddle { pPos = rInitPos }
@@ -50,7 +50,7 @@ pong g = proc e -> mdo
                               , gsLPlayer = lPlayer { psScore = lScore }
                               , gsBall    = ball }
   returnA -< ((\_ -> drawScene (w,h) gameState >> return True) <$> graphics) `rMerge`
-             (handleQuit <$> filterE (\(k,b) -> k == GLFW.KeyEsc && b) input)
+             (handleQuit win <$> filterE (\(k,b) -> k == GLFW.Key'Escape && b) input)
   where
   reflect :: (Num a) => Bool -> a -> a
   reflect b v = if b then -v else v
