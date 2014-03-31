@@ -111,11 +111,11 @@ getRealTime = floor <$> do
    Nothing -> 0
    Just y  -> y
 
-registerKeyHandler :: GLFW.Window -> ((a -> IO ()) -> GLFW.KeyCallback) -> AddHandler a
+registerKeyHandler :: GLFW.Window -> (Handler a -> GLFW.KeyCallback) -> Handler a -> IO ()
 registerKeyHandler win handler sink = do
   putStrLn "called registerKeyHandler"
   GLFW.setKeyCallback win (Just (handler sink))
-  return (return ())
+  return ()
 
 type GameNetworkDescription = forall t. GLFW.Window
                                      -> Event    t (GLFW.Key,Bool)       -- ^ user input
