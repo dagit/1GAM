@@ -15,6 +15,12 @@ data AssemblerState = AssemblerState
   }
   deriving (Read, Show, Eq, Ord, Generic)
 
+-- Initially, I thought I would make a cute little
+-- codegen monad, but now I'm leaning towards
+-- embedding assembly using quasiquotation.
+-- Then building higher level constructions on top
+-- of that. I'm not sure if the monad will be useful
+-- with that way of doing thinngs.
 newtype NES a = NES { unNES :: a }
   deriving Functor
 
