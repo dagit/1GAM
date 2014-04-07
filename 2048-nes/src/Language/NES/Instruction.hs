@@ -19,12 +19,12 @@ data OpCode =
   -- A + M + C -> A, C
   -- N Z C I D V
   -- + + + - - +
-    AddAC
+    ADC
   -- | AND, AND Memory with Accumulator
   -- A AND M -> A
   -- N Z C I D V
   -- + + - - - -
-  | AndAC
+  | AND
   -- | ASL, Shift Left One Bit (Memory of Accumulator)
   -- C <- [76543210] <- 0
   -- N Z C I D V
@@ -334,6 +334,10 @@ instance Address Zeropage where
   addressMode (Zeropage  x) = A.Zeropage x
 instance Address (Zeropage, X) where
   addressMode (Zeropage x, X) = A.ZeropageX x
+instance Address (Zeropage, Y) where
+  addressMode (Zeropage y, Y) = A.ZeropageX y
+instance Address Indirect where
+  addressMode (Indirect x) = A.Indirect x
 instance Address (Indirect, X) where
   addressMode (Indirect x, X) = A.IndirectX x
 instance Address (Indirect, Y) where
@@ -342,20 +346,22 @@ instance Address Relative where
   addressMode (Relative w) = A.Relative w
 
 class Address a => GenericOp a where
-instance GenericOp Absolute      where
-instance GenericOp (Absolute, X) where
-instance GenericOp (Absolute, Y) where
 instance GenericOp Immediate     where
 instance GenericOp Zeropage      where
 instance GenericOp (Zeropage, X) where
+instance GenericOp Absolute      where
+instance GenericOp (Absolute, X) where
+instance GenericOp (Absolute, Y) where
 instance GenericOp (Indirect, X) where
 instance GenericOp (Indirect, Y) where
 
 mkI :: Address a => OpCode -> a -> Instruction
 mkI x = Instruction x . addressMode
 
-lda, and, cmp :: GenericOp a => a -> Instruction
-[lda, and, cmp] = [ mkI x | x <- [LDA, AndAC, CMP] ]
+lda, adc, and, cmp, eor, ora, sbc
+  :: GenericOp a => a -> Instruction
+[lda, adc, and, cmp, eor, ora, sbc]
+  = map mkI [LDA, ADC, AND, CMP, EOR, ORA, SBC]
 
 class Address a => ArithOp a  where
 instance ArithOp A            where
@@ -364,23 +370,118 @@ instance ArithOp (Zeropage,X) where
 instance ArithOp Absolute     where
 instance ArithOp (Absolute,X) where
 
-asl :: ArithOp a => a -> Instruction
-asl = mkI ASL
+asl, rol, ror, lsr
+  :: ArithOp a => a -> Instruction
+[asl, rol, ror, lsr]
+  = map mkI [ASL, ROL, ROR, LSR]
 
 class Address a => RelativeOp a where
 instance RelativeOp Relative where
 
-bcc, bcs, beq, bmi, bne, bpl, bvc, bvs :: RelativeOp a => a -> Instruction
+bcc, bcs, beq, bmi, bne, bpl, bvc, bvs
+  :: RelativeOp a => a -> Instruction
 [bcc, bcs, beq, bmi, bne, bpl, bvc, bvs]
-  = [ mkI x | x <- [BCC, BCS, BEQ, BMI, BNE, BPL, BVC, BVS] ]
+  = map mkI [BCC, BCS, BEQ, BMI, BNE, BPL, BVC, BVS]
 
 class Address a => BitOp a where
 instance BitOp Zeropage where
 instance BitOp Absolute where
 
-bit, brk, clc, cld, cli :: Instruction
-[bit, brk, clc, cld, cli]
-  = [ Instruction x A.Implied | x <- [BIT, BRK, CLC, CLD, CLI] ]
+bit, brk, clc, cld, cli, clv, dex
+   , dey, inx, iny, nop, pha, php, pla
+   , plp, rti, rts, sec, sed, sei, tax
+   , tay, tsx, txa, txs, tya
+  :: Instruction
+[bit, brk, clc, cld, cli, clv, dex
+    , dey, inx, iny, nop, pha, php, pla
+    , plp, rti, rts, sec, sed, sei, tax
+    , tay, tsx, txa, txs, tya]
+  = map (\x -> Instruction x A.Implied)
+        [ BIT, BRK, CLC, CLD, CLI, CLV, DEX
+        , DEY, INX, INY, NOP, PHA, PHP, PLA
+        , PLP, RTI, RTS, SEC, SED, SEI, TAX
+        , TAY, TSX, TXA, TXS, TYA ]
+
+class Address a => CompareOp a where
+instance CompareOp Immediate where
+instance CompareOp Zeropage  where
+instance CompareOp Absolute  where
+
+cpx, cpy
+  :: CompareOp a => a -> Instruction
+[cpx, cpy]
+  = map mkI [ CPX, CPY ]
+
+class Address a => DecIncOp a where
+instance DecIncOp Zeropage      where
+instance DecIncOp (Zeropage, X) where
+instance DecIncOp Absolute      where
+instance DecIncOp (Absolute, X) where
+
+dec, inc
+  :: DecIncOp a => a -> Instruction
+[dec, inc]
+  = map mkI [DEC, INC]
+
+class Address a => JmpOp a where
+instance JmpOp Absolute where
+instance JmpOp Indirect where
+
+jmp :: JmpOp a => a -> Instruction
+jmp = mkI JMP
+
+jsr :: Absolute -> Instruction
+jsr = mkI JSR
+
+class Address a => LdxOp a where
+instance LdxOp Immediate     where
+instance LdxOp Zeropage      where
+instance LdxOp (Zeropage, Y) where
+instance LdxOp Absolute      where
+instance LdxOp (Absolute, Y) where
+
+ldx :: LdxOp a => a -> Instruction
+ldx = mkI LDX
+
+class Address a => LdyOp a where
+instance LdyOp Immediate     where
+instance LdyOp Zeropage      where
+instance LdyOp (Zeropage, X) where
+instance LdyOp Absolute      where
+instance LdyOp (Absolute, X) where
+
+ldy :: LdyOp a => a -> Instruction
+ldy = mkI LDY
+
+class Address a => StaOp a where
+instance StaOp Zeropage      where
+instance StaOp (Zeropage, X) where
+instance StaOp Absolute      where
+instance StaOp (Absolute, X) where
+instance StaOp (Absolute, Y) where
+instance StaOp (Indirect, X) where
+instance StaOp (Indirect, Y) where
+
+sta :: StaOp a => a -> Instruction
+sta = mkI STA
+
+class Address a => StxOp a where
+instance StxOp Zeropage      where
+instance StxOp (Zeropage, Y) where
+instance StxOp Absolute      where
+
+stx :: StxOp a => a -> Instruction
+stx = mkI STX
+
+class Address a => StyOp a where
+instance StyOp Zeropage      where
+instance StyOp (Zeropage, X) where
+instance StyOp Absolute      where
+
+sty :: StyOp a => a -> Instruction
+sty = mkI STY
+
+
 
 {- TODO: instead of the syntax hacks below,
 build a quasiquoter that takes the following syntax:
