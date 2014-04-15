@@ -10,6 +10,7 @@ import Data.Word
 import Data.Bits
 import GHC.Generics
 import Control.Applicative
+import Control.Monad ( guard )
 
 -- | Defines the assembly instructions for the 6502
 
@@ -39,7 +40,7 @@ data Mnemonic
 -- | As defined by: http://www.llx.com/~nparker/a2/opcodes.html
 opcode :: Mnemonic -> Operand -> Maybe OpCode
 opcode m op  =  fmap fromBits decode
-            <|> lookup m rest
+            <|> (guard validOp >> lookup m rest)
 
   where
   fromBits :: [Word8] -> OpCode
@@ -84,36 +85,43 @@ opcode m op  =  fmap fromBits decode
 
   -- Group instructions by supported addressing modes
   decode = case m of
-    ORA -> Just [0,0,0] <+> decodeOp1 <+> Just [0,1]
-    AND -> Just [0,0,1] <+> decodeOp1 <+> Just [0,1]
-    EOR -> Just [0,1,0] <+> decodeOp1 <+> Just [0,1]
-    ADC -> Just [0,1,1] <+> decodeOp1 <+> Just [0,1]
-    STA -> Just [1,0,0] <+> decodeOp1 <+> Just [0,1]
-    LDA -> Just [1,0,1] <+> decodeOp1 <+> Just [0,1]
-    CMP -> Just [1,1,0] <+> decodeOp1 <+> Just [0,1]
-    SBC -> Just [1,1,1] <+> decodeOp1 <+> Just [0,1]
+    ORA                  -> Just [0,0,0] <+> decodeOp1 <+> Just [0,1]
+    AND                  -> Just [0,0,1] <+> decodeOp1 <+> Just [0,1]
+    EOR                  -> Just [0,1,0] <+> decodeOp1 <+> Just [0,1]
+    ADC                  -> Just [0,1,1] <+> decodeOp1 <+> Just [0,1]
+    STA                  -> Just [1,0,0] <+> decodeOp1 <+> Just [0,1]
+    LDA                  -> Just [1,0,1] <+> decodeOp1 <+> Just [0,1]
+    CMP                  -> Just [1,1,0] <+> decodeOp1 <+> Just [0,1]
+    SBC                  -> Just [1,1,1] <+> decodeOp1 <+> Just [0,1]
 
-    ASL -> Just [0,0,0] <+> decodeOp2 <+> Just [1,0]
-    ROL -> Just [0,0,1] <+> decodeOp2 <+> Just [1,0]
-    LSR -> Just [0,1,0] <+> decodeOp2 <+> Just [1,0]
-    ROR -> Just [0,1,1] <+> decodeOp2 <+> Just [1,0]
-    STX -> Just [1,0,0] <+> decodeOp2 <+> Just [1,0]
-    LDX -> Just [1,0,1] <+> decodeOp2 <+> Just [1,0]
-    DEC -> Just [1,1,0] <+> decodeOp2 <+> Just [1,0]
-    INC -> Just [1,1,1] <+> decodeOp2 <+> Just [1,0]
+    ASL                  -> Just [0,0,0] <+> decodeOp2 <+> Just [1,0]
+    ROL                  -> Just [0,0,1] <+> decodeOp2 <+> Just [1,0]
+    LSR                  -> Just [0,1,0] <+> decodeOp2 <+> Just [1,0]
+    ROR                  -> Just [0,1,1] <+> decodeOp2 <+> Just [1,0]
+    STX                  -> Just [1,0,0] <+> decodeOp2 <+> Just [1,0]
+    LDX                  -> Just [1,0,1] <+> decodeOp2 <+> Just [1,0]
+    DEC                  -> Just [1,1,0] <+> decodeOp2 <+> Just [1,0]
+    INC                  -> Just [1,1,1] <+> decodeOp2 <+> Just [1,0]
 
-    BIT -> Just [0,0,1] <+> decodeOp3 <+> Just [0,0]
+    BIT                  -> Just [0,0,1] <+> decodeOp3 <+> Just [0,0]
     JMP | op == Absolute -> Just [0,1,1] <+> decodeOp3 <+> Just [0,0]
         | otherwise      -> Just [0,1,0] <+> decodeOp3 <+> Just [0,0]
-    STY -> Just [1,0,0] <+> decodeOp3 <+> Just [0,0]
-    LDY -> Just [1,0,1] <+> decodeOp3 <+> Just [0,0]
-    CPY -> Just [1,1,0] <+> decodeOp3 <+> Just [0,0]
-    CPX -> Just [1,1,1] <+> decodeOp3 <+> Just [0,0]
-    _   -> Nothing
+    STY                  -> Just [1,0,0] <+> decodeOp3 <+> Just [0,0]
+    LDY                  -> Just [1,0,1] <+> decodeOp3 <+> Just [0,0]
+    CPY                  -> Just [1,1,0] <+> decodeOp3 <+> Just [0,0]
+    CPX                  -> Just [1,1,1] <+> decodeOp3 <+> Just [0,0]
+    _                    -> Nothing
 
+  -- This check is only meant for mnemonics in the table below
+  validOp = case op of
+    Relative -> m `elem` [ BPL, BMI, BVC, BVS, BCC, BCS, BNE, BEQ ]
+    Implied  -> m `elem` [ BRK, RTI, RTS, PHP, PLP, PHA, PLA, DEY
+                         , TAY, INY, INX, CLC, SEC, CLI, SEI, TYA
+                         , CLV, CLD, SED, TXA, TXS, TAX, TSX, DEX
+                         , NOP ]
+    Absolute -> m == JSR
+    _        -> False
   -- Everything else is one-off, so we use a table.
-  -- TODO: need to add a guard that checks the operand
-  -- for each of these.
   rest = [ (BPL,0x10), (BMI,0x30), (BVC,0x50), (BVS,0x70)
          , (BCC,0x90), (BCS,0xB0), (BNE,0xD0), (BEQ,0xF0)
          , (BRK,0x00), (JSR,0x20), (RTI,0x40), (RTS,0x60)
