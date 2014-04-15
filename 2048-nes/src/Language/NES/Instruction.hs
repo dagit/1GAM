@@ -3,541 +3,124 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module Language.NES.Instruction where
 
-import           Language.NES.AddressMode ( AddressMode )
-import qualified Language.NES.AddressMode as A
+-- import           Language.NES.AddressMode ( AddressMode )
+-- import qualified Language.NES.AddressMode as A
 
 import Data.Word
+import Data.Bits
 import GHC.Generics
+import Control.Applicative
 
 -- | Defines the assembly instructions for the 6502
 
-data Instruction = Instruction OpCode AddressMode
+data Instruction = Instruction Mnemonic Operand
   deriving (Read, Show, Eq, Ord, Generic)
 
-data OpCode =
-  -- | ADC, Add Memory to Accumulator with Carry
-  -- A + M + C -> A, C
-  -- N Z C I D V
-  -- + + + - - +
-    ADC
-  -- | AND, AND Memory with Accumulator
-  -- A AND M -> A
-  -- N Z C I D V
-  -- + + - - - -
-  | AND
-  -- | ASL, Shift Left One Bit (Memory of Accumulator)
-  -- C <- [76543210] <- 0
-  -- N Z C I D V
-  -- + + + - - -
-  | ASL
-  -- | BCC, Branch on Carry Clear
-  -- branch if C = 0
-  -- N Z C I D V
-  -- - - - - - -
-  | BCC
-  -- | BCS, Branch On Carry Set
-  -- branch if C = 1
-  -- N Z C I D V
-  -- - - - - - -
-  | BCS
-  -- | BEQ, Branch on Result Zero
-  -- branch if Z = 1
-  -- N Z C I D V
-  -- - - - - - -
-  | BEQ
-  -- | BIT, Test Bits in Memory with Accumulator
-  -- A AND M, M7 -> N, M6 -> V
-  --  N Z C I D V
-  -- M7 + - - - M6
-  | BIT
-  -- | BMI, Branch on Result Minus
-  -- branch if N = 1
-  -- N Z C I D V
-  -- - - - - - -
-  | BMI
-  -- | BNE, Branch on Result not Zero
-  -- branch if Z = 0
-  -- N Z C I D V
-  -- - - - - - -
-  | BNE
-  -- | BPL, Branch on Resutl Plus
-  -- branch if N = 0
-  -- N Z C I D V
-  -- - - - - - -
-  | BPL
-  -- | BRK, Force Break
-  | BRK
-  -- | BVC, Break on Overflow Clear
-  -- branch if V = 0
-  -- N Z C I D V
-  -- - - - - - -
-  | BVC
-  -- | BVS, Branch on Overflow Set
-  -- branch if V = 1
-  -- N Z C I D V
-  -- - - - - - -
-  | BVS
-  -- | CLC, Clear Carry flag
-  -- 0 -> C
-  -- N Z C I D V
-  -- - - 0 - - -
-  | CLC
-  -- | CLD, Clear Decimal Mode
-  -- 0 -> D
-  -- N Z C I D V
-  -- - - - - 0 -
-  | CLD
-  -- | CLI, Clear Interrupt Disable Bit
-  -- 0 -> I
-  -- N Z C I D V
-  -- - - - 0 - -
-  | CLI
-  -- | CLV, Clear Overflow Flag
-  -- 0 -> V
-  -- N Z C I D V
-  -- - - - - - 0
-  | CLV
-  -- | CMP, Compare Memory with Accumulator
-  -- A - M
-  -- N Z C I D V
-  -- + + + - - -
-  | CMP
-  -- | CPX, Compare Memory and Index X
-  -- X - M
-  -- N Z C I D V
-  -- + + + - - -
-  | CPX
-  -- | CPY, Compare Memory and Index Y
-  -- Y - M
-  -- N Z C I D V
-  -- + + + - - -
-  | CPY
-  -- | DEC, Decrement Memory by One
-  -- M - 1 -> M
-  -- N Z C I D V
-  -- + + - - - -
-  | DEC
-  -- | DEX, Decrement Index X by One
-  -- X - 1 -> X
-  -- N Z C I D V
-  -- + + - - - -
-  | DEX
-  -- | DEY, Decrement Index Y by One
-  -- Y - 1 -> Y
-  -- N Z C I D V
-  -- + + - - - -
-  | DEY
-  -- | EOR, Exclusive-OR Memory with Accumulator
-  -- A EOR M -> A
-  -- N Z C I D V
-  -- + + - - - -
-  | EOR
-  -- | INC, Increment Memory by One
-  -- M + 1 -> M
-  -- N Z C I D V
-  -- + + - - - -
-  | INC
-  -- | INX, Increment Index X by One
-  -- X + 1 -> X
-  -- N Z C I D V
-  -- + + - - - -
-  | INX
-  -- | INY, Increment Index Y by One
-  -- Y + 1 -> Y
-  -- N Z C I D V
-  -- + + - - - -
-  | INY
-  -- | JMP, Jump to New Location
-  -- (PC + 1) -> PCL
-  -- (PC + 2) -> PCH
-  -- N Z C I D V
-  -- - - - - - -
-  | JMP
-  -- | JSR, Jump to New Location Saving Return Address
-  -- push (PC + 2)
-  -- (PC + 1) -> PCL
-  -- (PC + 2) -> PCH
-  -- N Z C I D V
-  -- - - - - - -
-  | JSR
-  -- | LDA, Load Accumulator with Memory
-  -- M -> A
-  -- N Z C I D V
-  -- + + - - - -
-  | LDA
-  -- | LDX, Load Index X with Memory
-  -- M -> X
-  -- N Z C I D V
-  -- + + - - - -
-  | LDX
-  -- | LDY, Load Index Y with Memory
-  -- M -> Y
-  -- N Z C I D V
-  -- + + - - - -
-  | LDY
-  -- | LSR, Shift One Bit Right (Memory or Accumulator)
-  -- 0 -> [76543210] -> C
-  -- N Z C I D V
-  -- - + + - - -
-  | LSR
-  -- | NOP, No Operation
-  | NOP
-  -- | ORA, OR Memory with Accumulator
-  -- A OR M -> A
-  -- N Z C I D V
-  -- + + - - - -
-  | ORA
-  -- | PHA, Push Accumulator on Stack
-  -- push A
-  -- N V C I D V
-  -- - - - - - -
-  | PHA
-  -- | PHP, Push Processor Status on Stack
-  -- push SR
-  -- N Z C I D V
-  -- - - - - - -
-  | PHP
-  -- | PLA, Pull Accumulator from Stack
-  -- pull A
-  -- N Z C I D V
-  -- + + - - - -
-  | PLA
-  -- | PLP, Pull Processor Status from Stack
-  -- pull SR
-  -- N Z C I D V
-  -- + + + + + +
-  | PLP
-  -- | ROL, Rotate One Bit Left (Memory or Accumulator)
-  -- C <- [76543210] <- C
-  -- N Z C I D V
-  -- + + + - - -
-  | ROL
-  -- | ROR, Rotate One Bit Right (Memory or Accumulator)
-  -- C -> [76543210] -> C
-  -- N Z C I D V
-  -- + + + - - -
-  | ROR
-  -- | RTI, Return from Interrupt
-  -- pull SR, pull PC
-  -- N Z C I D V
-  -- - - - - - -
-  | RTI
-  -- | RTS, Return from Subroutine
-  -- pull PC, PC + 1 -> PC
-  -- N Z C I D V
-  -- - - - - - -
-  | RTS
-  -- | SBC, Subtract Memory from Accumulator with Borrow
-  -- A - M - C -> A
-  -- N Z C I D V
-  -- + + + - - +
-  | SBC
-  -- | SEC, Set Carry Flag
-  -- 1 -> C
-  -- N Z C I D V
-  -- - - 1 - - -
-  | SEC
-  -- | SED, Set Decimal Flag
-  -- 1 -> D
-  -- N Z C I D V
-  -- - - - - 1 -
-  | SED
-  -- | SEI, Set Interrupt Disable Status
-  -- 1 -> I
-  -- N Z C I D V
-  -- - - - 1 - -
-  | SEI
-  -- | STA, Store Accumulator in Memory
-  -- A -> M
-  -- N Z C I D V
-  -- - - - - - -
-  | STA
-  -- | STX, Store Index X in Memory
-  -- X -> M
-  -- N Z C I D V
-  -- - - - - - -
-  | STX
-  -- | STY, Store Index Y in Memory
-  -- Y -> M
-  -- N Z C I D V
-  -- - - - - - -
-  | STY
-  -- | TAX, Transfer Accumulator to Index X
-  -- A -> X
-  -- N Z C I D V
-  -- + + - - - -
-  | TAX
-  -- | TAY, Transfer Accumulator to Index Y
-  -- A -> Y
-  -- N Z C I D V
-  -- + + - - - -
-  | TAY
-  -- | TSX, Transfer Stack Pointer to Index x
-  -- SP -> X
-  -- N Z C I D V
-  -- + + - - - -
-  | TSX
-  -- | TXA, Transfer Index X to Accumulator
-  -- X -> A
-  -- N Z C I D V
-  -- + + - - - -
-  | TXA
-  -- | TXS, Transfer Index X to Stack Register
-  -- X -> SP
-  -- N Z C I D V
-  -- + + - - - -
-  | TXS
-  -- | TYA -> Transfer Index Y to Accumulator
-  -- Y -> A
-  -- N Z C I D V
-  -- + + - - - -
-  | TYA
+type OpCode = Word8
+
+data Operand
+  = Implied   | Accumulator
+  | Absolute  | AbsoluteX | AbsoluteY
+  | Indirect  | IndirectX | IndirectY
+  | Immediate | Relative
+  | Zeropage  | ZeropageX | ZeropageY
   deriving (Read, Show, Eq, Ord, Generic)
 
-{- TODO: I don't think this is needed.
-data Register
-  = PC -- ^ Program Counter
-  | AC -- ^ Accumulator
-  | X  -- ^ X register
-  | Y  -- ^ Y register
-  | SR -- ^ Status register [NV-BDIZC]
-  | SP -- ^ Stack pointer
+data Mnemonic
+  = ADC | AND | ASL | BCC | BCS | BEQ | BIT | BMI
+  | BNE | BPL | BRK | BVC | BVS | CLC | CLD | CLI
+  | CLV | CMP | CPX | CPY | DEC | DEX | DEY | EOR
+  | INC | INX | INY | JMP | JSR | LDA | LDX | LDY
+  | LSR | NOP | ORA | PHA | PHP | PLA | PLP | ROL
+  | ROR | RTI | RTS | SBC | SEC | SED | SEI | STA
+  | STX | STY | TAX | TAY | TSX | TXA | TXS | TYA
   deriving (Read, Show, Eq, Ord, Generic)
--}
 
-data PC = PC
-data A  = A
-data X  = X
-data Y  = Y
-data SR = SR
-data SP = SP
-data Relative  = Relative  !Word8
-data Indirect  = Indirect  !Word8
-data Absolute  = Absolute  !Word16
-data Immediate = Immediate !Word8
-data Zeropage  = Zeropage  !Word8
+-- | As defined by: http://www.llx.com/~nparker/a2/opcodes.html
+opcode :: Mnemonic -> Operand -> Maybe OpCode
+opcode m op  =  fmap fromBits decode
+            <|> lookup m rest
 
-class Address a where
-  addressMode :: a -> AddressMode
+  where
+  fromBits :: [Word8] -> OpCode
+  fromBits = foldl (\a b -> a `shiftL` 1 + b) 0
+  (<+>) = liftA2 (++)
 
-instance Address A where
-  addressMode A = A.Accumulator
-instance Address Absolute where
-  addressMode (Absolute  x) = A.Absolute x
-instance Address (Absolute, X) where
-  addressMode (Absolute x, X) = A.AbsoluteX x
-instance Address (Absolute, Y) where
-  addressMode (Absolute y, Y) = A.AbsoluteY y
-instance Address Immediate where
-  addressMode (Immediate i) = A.Immediate i
-instance Address Zeropage where
-  addressMode (Zeropage  x) = A.Zeropage x
-instance Address (Zeropage, X) where
-  addressMode (Zeropage x, X) = A.ZeropageX x
-instance Address (Zeropage, Y) where
-  addressMode (Zeropage y, Y) = A.ZeropageX y
-instance Address Indirect where
-  addressMode (Indirect x) = A.Indirect x
-instance Address (Indirect, X) where
-  addressMode (Indirect x, X) = A.IndirectX x
-instance Address (Indirect, Y) where
-  addressMode (Indirect y, Y) = A.IndirectY y
-instance Address Relative where
-  addressMode (Relative w) = A.Relative w
+  -- Could use a better name, basically there is a group
+  -- of instructions that decode this way. Same for decodeOp2
+  -- and decodeOp3. See decode for details.
+  decodeOp1 :: Maybe [Word8]
+  decodeOp1 = case op of
+    IndirectX            -> Just [0,0,0]
+    Zeropage             -> Just [0,0,1]
+    Immediate | m /= STA -> Just [0,1,0]
+    Absolute             -> Just [0,1,1]
+    IndirectY            -> Just [1,0,0]
+    ZeropageX            -> Just [1,0,1]
+    AbsoluteY            -> Just [1,1,0]
+    AbsoluteX            -> Just [1,1,1]
+    _                    -> Nothing
 
-class Address a => GenericOp a where
-instance GenericOp Immediate     where
-instance GenericOp Zeropage      where
-instance GenericOp (Zeropage, X) where
-instance GenericOp Absolute      where
-instance GenericOp (Absolute, X) where
-instance GenericOp (Absolute, Y) where
-instance GenericOp (Indirect, X) where
-instance GenericOp (Indirect, Y) where
+  decodeOp2 :: Maybe [Word8]
+  decodeOp2 = case op of
+    Immediate   | m == LDX                      -> Just [0,0,0]
+    Accumulator | m `elem` [ASL, ROL, LSR, ROR] -> Just [0,1,0]
+    Zeropage                                    -> Just [0,0,1]
+    ZeropageX   | m `notElem` [LDX, STX]        -> Just [1,0,1]
+    ZeropageY   | m `elem`    [LDX, STX]        -> Just [1,0,1]
+    Absolute                                    -> Just [0,1,1]
+    AbsoluteX   | m /= LDX                      -> Just [1,1,1]
+    AbsoluteY   | m == LDX                      -> Just [1,1,1]
+    _                                           -> Nothing
 
-mkI :: Address a => OpCode -> a -> Instruction
-mkI x = Instruction x . addressMode
+  decodeOp3 :: Maybe [Word8]
+  decodeOp3 = case op of
+    Immediate | m `elem` [LDY, CPY, CPX]           -> Just [0,0,0]
+    Zeropage  | m `elem` [BIT, STY, LDY, CPY, CPX] -> Just [0,0,1]
+    Absolute                                       -> Just [0,1,1]
+    ZeropageX | m `elem` [STY, LDY]                -> Just [1,0,1]
+    AbsoluteX | m == LDY                           -> Just [1,1,1]
+    _                                              -> Nothing
 
-lda, adc, and, cmp, eor, ora, sbc
-  :: GenericOp a => a -> Instruction
-[lda, adc, and, cmp, eor, ora, sbc]
-  = map mkI [LDA, ADC, AND, CMP, EOR, ORA, SBC]
+  -- Group instructions by supported addressing modes
+  decode = case m of
+    ORA -> Just [0,0,0] <+> decodeOp1 <+> Just [0,1]
+    AND -> Just [0,0,1] <+> decodeOp1 <+> Just [0,1]
+    EOR -> Just [0,1,0] <+> decodeOp1 <+> Just [0,1]
+    ADC -> Just [0,1,1] <+> decodeOp1 <+> Just [0,1]
+    STA -> Just [1,0,0] <+> decodeOp1 <+> Just [0,1]
+    LDA -> Just [1,0,1] <+> decodeOp1 <+> Just [0,1]
+    CMP -> Just [1,1,0] <+> decodeOp1 <+> Just [0,1]
+    SBC -> Just [1,1,1] <+> decodeOp1 <+> Just [0,1]
 
-class Address a => ArithOp a  where
-instance ArithOp A            where
-instance ArithOp Zeropage     where
-instance ArithOp (Zeropage,X) where
-instance ArithOp Absolute     where
-instance ArithOp (Absolute,X) where
+    ASL -> Just [0,0,0] <+> decodeOp2 <+> Just [1,0]
+    ROL -> Just [0,0,1] <+> decodeOp2 <+> Just [1,0]
+    LSR -> Just [0,1,0] <+> decodeOp2 <+> Just [1,0]
+    ROR -> Just [0,1,1] <+> decodeOp2 <+> Just [1,0]
+    STX -> Just [1,0,0] <+> decodeOp2 <+> Just [1,0]
+    LDX -> Just [1,0,1] <+> decodeOp2 <+> Just [1,0]
+    DEC -> Just [1,1,0] <+> decodeOp2 <+> Just [1,0]
+    INC -> Just [1,1,1] <+> decodeOp2 <+> Just [1,0]
 
-asl, rol, ror, lsr
-  :: ArithOp a => a -> Instruction
-[asl, rol, ror, lsr]
-  = map mkI [ASL, ROL, ROR, LSR]
+    BIT -> Just [0,0,1] <+> decodeOp3 <+> Just [0,0]
+    JMP | op == Absolute -> Just [0,1,1] <+> decodeOp3 <+> Just [0,0]
+        | otherwise      -> Just [0,1,0] <+> decodeOp3 <+> Just [0,0]
+    STY -> Just [1,0,0] <+> decodeOp3 <+> Just [0,0]
+    LDY -> Just [1,0,1] <+> decodeOp3 <+> Just [0,0]
+    CPY -> Just [1,1,0] <+> decodeOp3 <+> Just [0,0]
+    CPX -> Just [1,1,1] <+> decodeOp3 <+> Just [0,0]
+    _   -> Nothing
 
-class Address a => RelativeOp a where
-instance RelativeOp Relative where
-
-bcc, bcs, beq, bmi, bne, bpl, bvc, bvs
-  :: RelativeOp a => a -> Instruction
-[bcc, bcs, beq, bmi, bne, bpl, bvc, bvs]
-  = map mkI [BCC, BCS, BEQ, BMI, BNE, BPL, BVC, BVS]
-
-class Address a => BitOp a where
-instance BitOp Zeropage where
-instance BitOp Absolute where
-
-bit, brk, clc, cld, cli, clv, dex
-   , dey, inx, iny, nop, pha, php, pla
-   , plp, rti, rts, sec, sed, sei, tax
-   , tay, tsx, txa, txs, tya
-  :: Instruction
-[bit, brk, clc, cld, cli, clv, dex
-    , dey, inx, iny, nop, pha, php, pla
-    , plp, rti, rts, sec, sed, sei, tax
-    , tay, tsx, txa, txs, tya]
-  = map (\x -> Instruction x A.Implied)
-        [ BIT, BRK, CLC, CLD, CLI, CLV, DEX
-        , DEY, INX, INY, NOP, PHA, PHP, PLA
-        , PLP, RTI, RTS, SEC, SED, SEI, TAX
-        , TAY, TSX, TXA, TXS, TYA ]
-
-class Address a => CompareOp a where
-instance CompareOp Immediate where
-instance CompareOp Zeropage  where
-instance CompareOp Absolute  where
-
-cpx, cpy
-  :: CompareOp a => a -> Instruction
-[cpx, cpy]
-  = map mkI [ CPX, CPY ]
-
-class Address a => DecIncOp a where
-instance DecIncOp Zeropage      where
-instance DecIncOp (Zeropage, X) where
-instance DecIncOp Absolute      where
-instance DecIncOp (Absolute, X) where
-
-dec, inc
-  :: DecIncOp a => a -> Instruction
-[dec, inc]
-  = map mkI [DEC, INC]
-
-class Address a => JmpOp a where
-instance JmpOp Absolute where
-instance JmpOp Indirect where
-
-jmp :: JmpOp a => a -> Instruction
-jmp = mkI JMP
-
-jsr :: Absolute -> Instruction
-jsr = mkI JSR
-
-class Address a => LdxOp a where
-instance LdxOp Immediate     where
-instance LdxOp Zeropage      where
-instance LdxOp (Zeropage, Y) where
-instance LdxOp Absolute      where
-instance LdxOp (Absolute, Y) where
-
-ldx :: LdxOp a => a -> Instruction
-ldx = mkI LDX
-
-class Address a => LdyOp a where
-instance LdyOp Immediate     where
-instance LdyOp Zeropage      where
-instance LdyOp (Zeropage, X) where
-instance LdyOp Absolute      where
-instance LdyOp (Absolute, X) where
-
-ldy :: LdyOp a => a -> Instruction
-ldy = mkI LDY
-
-class Address a => StaOp a where
-instance StaOp Zeropage      where
-instance StaOp (Zeropage, X) where
-instance StaOp Absolute      where
-instance StaOp (Absolute, X) where
-instance StaOp (Absolute, Y) where
-instance StaOp (Indirect, X) where
-instance StaOp (Indirect, Y) where
-
-sta :: StaOp a => a -> Instruction
-sta = mkI STA
-
-class Address a => StxOp a where
-instance StxOp Zeropage      where
-instance StxOp (Zeropage, Y) where
-instance StxOp Absolute      where
-
-stx :: StxOp a => a -> Instruction
-stx = mkI STX
-
-class Address a => StyOp a where
-instance StyOp Zeropage      where
-instance StyOp (Zeropage, X) where
-instance StyOp Absolute      where
-
-sty :: StyOp a => a -> Instruction
-sty = mkI STY
-
-
-
-{- TODO: instead of the syntax hacks below,
-build a quasiquoter that takes the following syntax:
-http://www.masswerk.at/6502/6502_instruction_set.html
-OPC A
-OPC $HHLL
-OPC $HHLL,X
-OPC $HHLL,Y
-OPC #$BB
-OPC
-OPC ($HHLL)
-OPC ($BB,X)
-OPC ($LL),Y
-OPC $BB
-OPC $LL
-OPC $LL,X
-OPC $LL,Y
-
-Combined with the type class resolution above, it should
-provide with a nice way to only construct valid instructions.
-
-(#) :: (Immediate -> a) -> Word8 -> a
-x # y = x (Immediate y)
-
-infixl 1 $$
-($$) :: (Absolute -> a) -> Word16 -> a
-x $$ y = x (Absolute y)
-infixl 1 $^
-($^) :: ((Absolute,b) -> a) -> (Word16,b) -> a
-x $^ (w,y) = x (Absolute w, y)
-infixl 2 ~+
-(~+) :: a -> b -> (a, b)
-(~+) = (,)
-
-i :: Word8 -> Indirect
-i = Indirect
-
-immediate = lda #0xff
-zeropage  = lda 00
-zeropagex = lda $^00~+X
-absolute  = lda $$1234
-absolutex = lda $^1234~+X
-absolutey = lda $^1234~+Y
-indirectx = lda (i $$00,X)
-indirecty = lda (i $$00,Y)
--}
-
-
-{-
-class Opcodes a where
-  opcodes :: a -> [Word8]
-
-instance Opcodes Word8 where
-  opcodes w = [w]
-
-
-class Opcodes a => LdaOp a where
-  opcode :: a -> [Word8]
--}
+  -- Everything else is one-off, so we use a table.
+  -- TODO: need to add a guard that checks the operand
+  -- for each of these.
+  rest = [ (BPL,0x10), (BMI,0x30), (BVC,0x50), (BVS,0x70)
+         , (BCC,0x90), (BCS,0xB0), (BNE,0xD0), (BEQ,0xF0)
+         , (BRK,0x00), (JSR,0x20), (RTI,0x40), (RTS,0x60)
+         , (PHP,0x08), (PLP,0x28), (PHA,0x48), (PLA,0x68)
+         , (DEY,0x88), (TAY,0xA8), (INY,0xC8), (INX,0xE8)
+         , (CLC,0x18), (SEC,0x38), (CLI,0x58), (SEI,0x78)
+         , (TYA,0x98), (CLV,0xB8), (CLD,0xD8), (SED,0xF8)
+         , (TXA,0x8A), (TXS,0x9A), (TAX,0xAA), (TSX,0xBA)
+         , (DEX,0xCA), (NOP,0xEA)
+         ]
