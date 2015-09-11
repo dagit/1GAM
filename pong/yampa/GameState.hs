@@ -7,9 +7,9 @@ data Ball = Ball
   } deriving (Read, Show, Eq, Ord)
 
 data GameState = GameState
-  { gsLPlayer :: PlayerState -- ^ The "left" player
-  , gsRPlayer :: PlayerState -- ^ The "right" player
-  , gsBall    :: Ball        -- ^ The current state (position) of the ball
+  { gsLPlayer  :: PlayerState -- ^ The "left" player
+  , gsRPlayer  :: PlayerState -- ^ The "right" player
+  , gsBall     :: Ball        -- ^ The current state (position) of the ball
   } deriving (Read, Show, Eq, Ord)
 
 data PlayerState = PlayerState
@@ -46,9 +46,9 @@ mkPlayer = PlayerState
 
 mkGameState :: GameState
 mkGameState = GameState
-  { gsLPlayer = mkPlayer
-  , gsRPlayer = mkPlayer
-  , gsBall    = zeroBall
+  { gsLPlayer  = mkPlayer
+  , gsRPlayer  = mkPlayer
+  , gsBall     = zeroBall
   }
 
 data Collision

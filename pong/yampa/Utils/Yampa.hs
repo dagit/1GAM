@@ -89,7 +89,7 @@ gameLoop win sf = do
 
     -- register the keypress callback 
     GLFW.setKeyCallback win (Just $ \_win k _ s _ ->
-      void (react rh (0, Just (Event (KeyInput (k,s==GLFW.KeyState'Pressed))))))
+      void (react rh (0, Just (Event (KeyInput (k,s==GLFW.KeyState'Pressed||s==GLFW.KeyState'Repeating))))))
 
     -- gameloop
     -- The timing code in the gameloop is from here: http://gafferongames.com/game-physics/fix-your-timestep/

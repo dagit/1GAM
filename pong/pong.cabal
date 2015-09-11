@@ -20,7 +20,7 @@ executable reactive-banana-pong
                      , reactive-banana
                      , GLFW-b >= 1
                      , OpenGLRaw
-                     , active
+                     , active < 0.2
                      , vector-space
   ghc-options:       -Wall -O2
   ghc-prof-options:  -fprof-auto -prof -rtsopts

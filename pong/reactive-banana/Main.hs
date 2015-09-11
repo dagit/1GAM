@@ -201,7 +201,7 @@ gameLoop win gameNetwork = do
 --    void (registerKeyHandler uncurry fireKeyInput)
     void (registerKeyHandler win
                              (\f _win k _i s _m -> do
-                               f (k,s==GLFW.KeyState'Pressed)
+                               f (k,s==GLFW.KeyState'Pressed || s==GLFW.KeyState'Repeating)
                                return ())
                              fireKeyInput)
 
