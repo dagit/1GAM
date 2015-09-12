@@ -1,9 +1,5 @@
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE Arrows      #-}
-{-
- - Note: This code no longer works correctly as of about GHC 7.10.
- - It now produces <<loop>> on startup.
- -}
 module Pong
 ( pong
 ) where
@@ -14,51 +10,54 @@ import Utils.OpenGL
 import Utils.Yampa
 import qualified Graphics.UI.GLFW as GLFW
 
-pong :: RandomGen g => GLFW.Window -> g -> SF (Event External) (Event (IO Bool))
-pong win g = proc e -> do
-  (w',h') <- dHold (0,0) -< filterResize e
+initialState :: SF (Event External, (Float,Float)) (GameState, Event GameState)
+initialState = proc (e, (w,h)) -> do
   let input     = filterKeyInput e
-      graphics  = filterGraphics e
-      tick      = filterPhysics  e
-      spacebar  = () <$ filterE (\(k,b) -> k == GLFW.Key'Space && b) input
-      (w,h)     = (fromIntegral w', fromIntegral h')
+      spacebar  = filterE (\(k,b) -> k == GLFW.Key'Space && b) input
+      startNow  = if isEvent spacebar then snd (fromEvent spacebar) else False
       rPaddle   = mkPaddle { pPos = rInitPos }
       lPaddle   = mkPaddle { pPos = lInitPos }
       rInitPos  = ( w / 2 - paddleWidth - 10, 0)
       lInitPos  = (-w / 2               + 10, 0)
+      rPlayer   = mkPlayer { psPaddle = rPaddle { pPos = rInitPos } }
+      lPlayer   = mkPlayer { psPaddle = lPaddle { pPos = lInitPos } }
+      gameState = mkGameState { gsRPlayer  = rPlayer { psScore = 0 }
+                              , gsLPlayer  = lPlayer { psScore = 0 }
+                              , gsBall     = zeroBall }
+  returnA -< (gameState, (e `tag` gameState) `gate` startNow)
+
+doRound :: RandomGen g => g -> GameState -> SF (Event External,(Float,Float))
+                                               GameState
+doRound g initState = proc (a,(w,h)) -> do
+  launch <- once -< a
+  let input   = filterKeyInput a
+      rPlayer = gsRPlayer initState
+      lPlayer = gsLPlayer initState
+      tick    = filterPhysics a
+  initDirX <- (`reflect` 1) ^<< noise g -< launch
+  initDirY <- (`reflect` 1) ^<< noise g -< launch
+  initMagX <- noiseR (100,200) g -< launch
+  initMagY <- noiseR (100,200) g -< launch
   -- w/s keys (, and o for dvorak) control the "Left" player's paddle
-  lp <- leftPos  -< ((w,h), pSpeed rPaddle, input)
+  lp <- leftPos  -< ((w,h), pSpeed (psPaddle lPlayer), input)
   -- up/down arrows control the "Right" player's paddle
-  rp <- rightPos -< ((w,h), pSpeed lPaddle, input)
-  let rPlayer = mkPlayer { psPaddle = rPaddle { pPos = rPos } }
-      lPlayer = mkPlayer { psPaddle = lPaddle { pPos = lPos } }
-      rPos    = rp ^+^ pPos rPaddle
-      lPos    = lp ^+^ pPos lPaddle
-  rec
-  {- Ideally, we could have state for managing when the ball can be served.
-   - Unfortunately, this is causing a loop at the moment. So for now,
-   - I'm breaking the recursion in a naive way but also this means the ball
-   - can be served repeatedly. Which is very game breaking. -}
-    let serveBall = spacebar `gate` True {- canServe -}
-    canServe <- hold True -< (serveBall `tag` False) `rMerge` (ce `tag` True)
-    -- The ball's position updates on each physics event
-    initDirX <- (`reflect` 1) ^<< noise g -< serveBall
-    initDirY <- (`reflect` 1) ^<< noise g -< serveBall
-    initMagX <- noiseR (100,200) g -< serveBall
-    initMagY <- noiseR (100,200) g -< serveBall
-    -- Note: This switch is brittle. For example, if you change to rSwitch then you get
-    -- a cycle and ghc prints <<loop>>
-    (bp,ce)  <- drSwitch ballPos -< ((serveBall `tag` (initDirX*initMagX,initDirY*initMagY)
-                                     ,(psPaddle lPlayer,psPaddle rPlayer),(w,h),tick)
-                                    ,ce `tag` ballPos)
-  rScore <- accumHold 0 -< filterE (== Min) ce `tag` (+1)
-  lScore <- accumHold 0 -< filterE (== Max) ce `tag` (+1)
+  rp <- rightPos -< ((w,h), pSpeed (psPaddle rPlayer), input)
+  let lPos = pPos (psPaddle (gsLPlayer initState)) ^+^ lp
+      rPos = pPos (psPaddle (gsRPlayer initState)) ^+^ rp
+      lPaddle = (psPaddle lPlayer) { pPos = lPos }
+      rPaddle = (psPaddle rPlayer) { pPos = rPos }
+  (bp,ce) <- ballPos -< (launch `tag` (initDirX*initMagX,initDirY*initMagY)
+                        ,(lPaddle, rPaddle),(w,h),tick)
+  rScore <- dAccumHold 0 -< filterE (== Min) ce `tag` (+1)
+  lScore <- dAccumHold 0 -< filterE (== Max) ce `tag` (+1)
   let ball      = moveBall bp zeroBall
-      gameState = mkGameState { gsRPlayer  = rPlayer { psScore = rScore }
-                              , gsLPlayer  = lPlayer { psScore = lScore }
-                              , gsBall     = ball }
-  returnA -< ((\_ -> drawScene (w,h) gameState >> return True) <$> graphics) `rMerge`
-             (handleQuit win <$> filterE (\(k,b) -> k == GLFW.Key'Escape && b) input)
+      gameState =
+        mkGameState { gsRPlayer  = rPlayer { psScore  = rScore
+                                           , psPaddle = rPaddle }
+                    , gsLPlayer  = lPlayer { psScore  = lScore
+                                           , psPaddle = lPaddle }
+                    , gsBall     = ball }
+  returnA -< gameState
   where
   reflect :: (Num a) => Bool -> a -> a
   reflect b v = if b then -v else v
@@ -114,3 +113,13 @@ pong win g = proc e -> do
       uv <- impulse (0,0)  -< ((0, speed), (wb || cb) && (y <= h/2 - paddleHeight))
       (x,y) <- integral    -< dv ^+^ uv
     returnA -< (x,y)
+
+pong :: RandomGen g => GLFW.Window -> g -> SF (Event External) (Event (IO Bool))
+pong win g = proc e -> do
+  (w',h') <- hold (0,0) -< filterResize e
+  let input     = filterKeyInput e
+      graphics  = filterGraphics e
+      (w,h)     = (fromIntegral w', fromIntegral h')
+  gameState <- initialState `switch` doRound g -< (e, (w,h))
+  returnA -< ((\_ -> drawScene (w,h) gameState >> return True) <$> graphics) `rMerge`
+             (handleQuit win <$> filterE (\(k,b) -> k == GLFW.Key'Escape && b) input)

@@ -1,6 +1,7 @@
 {-# LANGUAGE Arrows #-}
 module Utils.Yampa where
 
+import Debug.Trace (trace)
 import Control.Applicative
 import Control.Monad (void, forever)
 import Data.IORef
@@ -10,6 +11,12 @@ import Utils.GLFW
 import qualified Data.Time as T
 import qualified Graphics.UI.GLFW as GLFW
 
+traceSF :: SF String String
+traceSF = proc s -> do
+  arr (\s -> trace s s) -< s
+
+traceShowSF :: Show a => SF a String
+traceShowSF = arr show >>> traceSF
 
 data External = KeyInput (GLFW.Key,Bool)
               | Graphics
